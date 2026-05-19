@@ -57,6 +57,20 @@ class CacheEntry:
 
 
 cache: dict[str, CacheEntry] = {}
+FALLBACK_UNIVERSE = [
+    {"symbol": "AAPL", "name": "Apple Inc.", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
+    {"symbol": "MSFT", "name": "Microsoft Corporation", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
+    {"symbol": "NVDA", "name": "NVIDIA Corporation", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
+    {"symbol": "AMZN", "name": "Amazon.com Inc.", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
+    {"symbol": "META", "name": "Meta Platforms Inc.", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
+    {"symbol": "GOOGL", "name": "Alphabet Inc. Class A", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
+    {"symbol": "TSLA", "name": "Tesla Inc.", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
+    {"symbol": "BRK.B", "name": "Berkshire Hathaway Inc. Class B", "exchange": "NYSE", "assetType": "Stock", "etf": False},
+    {"symbol": "JPM", "name": "JPMorgan Chase & Co.", "exchange": "NYSE", "assetType": "Stock", "etf": False},
+    {"symbol": "SPY", "name": "SPDR S&P 500 ETF Trust", "exchange": "NYSE Arca", "assetType": "ETF", "etf": True},
+    {"symbol": "QQQ", "name": "Invesco QQQ Trust", "exchange": "NASDAQ", "assetType": "ETF", "etf": True},
+]
+
 def cached(key: str, loader, ttl: int):
     now = time.time()
     entry = cache.get(key)
@@ -78,6 +92,91 @@ def fetch_text(url: str, timeout: int = 15) -> str:
         context = ssl._create_unverified_context()
         with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
             return response.read().decode("utf-8", errors="replace")
+
+
+def parse_bool(value: str | None) -> bool:
+    return str(value or "").strip().upper() in {"Y", "YES", "TRUE", "1"}
+
+
+def clean_symbol(symbol: str) -> str:
+    return symbol.strip().upper().replace("/", ".")
+
+
+def clean_cell(value: Any) -> str:
+    text = str(value or "").replace("\xa0", " ").strip()
+    if text.endswith(".0") and text[:-2].isdigit():
+        return text[:-2]
+    return text
+
+
+def parse_nasdaq_universe_items() -> list[dict[str, Any]]:
+    payload = cached("universe", load_universe, CACHE_TTL["universe"])
+    return [
+        {
+            "symbol": item["symbol"],
+            "name": item.get("name") or item["symbol"],
+            "exchange": item.get("exchange") or "US",
+            "assetType": item.get("assetType") or ("ETF" if item.get("etf") else "Stock"),
+            "etf": bool(item.get("etf")),
+            "market": "US",
+            "currency": "USD",
+        }
+        for item in payload.get("items", [])
+    ]
+
+
+def parse_pipe_table(text: str) -> list[dict[str, str]]:
+    lines = [line for line in text.splitlines() if line and not line.startswith("File Creation Time")]
+    reader = csv.DictReader(lines, delimiter="|")
+    return [row for row in reader if row]
+
+
+def load_universe() -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        nasdaq_rows = parse_pipe_table(fetch_text(NASDAQ_LISTED))
+        other_rows = parse_pipe_table(fetch_text(OTHER_LISTED))
+        rows: list[dict[str, Any]] = []
+
+        for row in nasdaq_rows:
+            symbol = clean_symbol(row.get("Symbol", ""))
+            name = row.get("Security Name", "").strip()
+            if not symbol or symbol == "Symbol" or parse_bool(row.get("Test Issue")):
+                continue
+            is_etf = parse_bool(row.get("ETF"))
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "name": name,
+                    "exchange": "NASDAQ",
+                    "assetType": "ETF" if is_etf else "Stock",
+                    "etf": is_etf,
+                }
+            )
+
+        exchange_map = {"A": "NYSE American", "N": "NYSE", "P": "NYSE Arca", "Z": "BATS", "V": "IEXG"}
+        for row in other_rows:
+            symbol = clean_symbol(row.get("ACT Symbol", ""))
+            name = row.get("Security Name", "").strip()
+            if not symbol or parse_bool(row.get("Test Issue")):
+                continue
+            is_etf = parse_bool(row.get("ETF"))
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "name": name,
+                    "exchange": exchange_map.get(row.get("Exchange", "").strip(), row.get("Exchange", "").strip()),
+                    "assetType": "ETF" if is_etf else "Stock",
+                    "etf": is_etf,
+                }
+            )
+
+        rows.sort(key=lambda item: (item["assetType"], item["symbol"]))
+        record_provider("nasdaq-universe", "OK", int((time.perf_counter() - started) * 1000), f"{len(rows)} symbols")
+        return {"source": "nasdaqtrader", "count": len(rows), "items": rows}
+    except Exception as exc:
+        record_provider("nasdaq-universe", "DEGRADED", int((time.perf_counter() - started) * 1000), str(exc))
+        return {"source": "fallback", "error": str(exc), "count": len(FALLBACK_UNIVERSE), "items": FALLBACK_UNIVERSE}
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
