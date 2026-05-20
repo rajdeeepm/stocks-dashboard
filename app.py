@@ -179,6 +179,116 @@ def load_universe() -> dict[str, Any]:
         return {"source": "fallback", "error": str(exc), "count": len(FALLBACK_UNIVERSE), "items": FALLBACK_UNIVERSE}
 
 
+def load_quotes(symbols: list[str]) -> dict[str, Any]:
+    unique = []
+    seen = set()
+    for symbol in symbols:
+        cleaned = clean_symbol(symbol)
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            unique.append(cleaned)
+
+    if not unique:
+        return {"source": "yahoo-chart", "items": []}
+
+    items = []
+    workers = min(12, len(unique))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(load_quote, symbol): symbol for symbol in unique}
+        for future in as_completed(futures):
+            try:
+                quote = future.result()
+            except Exception:
+                quote = None
+            if quote:
+                items.append(quote)
+    items.sort(key=lambda item: unique.index(item["symbol"]) if item["symbol"] in unique else 9999)
+    return {"source": "yahoo-chart", "items": items}
+
+
+def load_quote(symbol: str) -> dict[str, Any] | None:
+    started = time.perf_counter()
+    params = urllib.parse.urlencode({"range": "5d", "interval": "1d"})
+    payload = json.loads(fetch_text(f"{YAHOO_CHART}{urllib.parse.quote(yahoo_symbol(symbol))}?{params}"))
+    result = (payload.get("chart", {}).get("result") or [None])[0]
+    if not result:
+        return None
+
+    meta = result.get("meta", {})
+    timestamps = result.get("timestamp") or []
+    quote = ((result.get("indicators", {}).get("quote") or [{}])[0]) or {}
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
+    volumes = quote.get("volume") or []
+    last_index = latest_value_index(closes)
+    close = to_float(str(meta.get("regularMarketPrice"))) or value_at(closes, last_index)
+    open_price = value_at(opens, last_index)
+    previous = to_float(str(meta.get("chartPreviousClose")))
+    change = None
+    change_pct = None
+    if close is not None and previous not in (None, 0):
+        change = close - previous
+        change_pct = (change / previous) * 100
+
+    row_date = None
+    if timestamps and last_index is not None and last_index < len(timestamps):
+        row_date = datetime.fromtimestamp(timestamps[last_index]).strftime("%Y-%m-%d")
+
+    record_provider("yahoo-chart", "OK", int((time.perf_counter() - started) * 1000), f"quote {clean_symbol(symbol)}")
+    return {
+        "symbol": clean_symbol(symbol),
+        "date": row_date,
+        "time": datetime.fromtimestamp(meta.get("regularMarketTime", time.time())).strftime("%H:%M:%S"),
+        "open": open_price,
+        "high": value_at(highs, last_index) or to_float(str(meta.get("regularMarketDayHigh"))),
+        "low": value_at(lows, last_index) or to_float(str(meta.get("regularMarketDayLow"))),
+        "close": close,
+        "volume": value_at(volumes, last_index) or to_float(str(meta.get("regularMarketVolume"))),
+        "change": change,
+        "changePct": change_pct,
+    }
+
+
+def latest_value_index(values: list[Any]) -> int | None:
+    for index in range(len(values) - 1, -1, -1):
+        if values[index] is not None:
+            return index
+    return None
+
+
+def value_at(values: list[Any], index: int | None) -> float | None:
+    if index is None or index >= len(values):
+        return None
+    value = values[index]
+    if value is None:
+        return None
+    return to_float(str(value))
+
+
+def to_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    value = value.strip().replace(",", "")
+    if not value or value.upper() == "N/D":
+        return None
+    try:
+        numeric = float(value)
+    except ValueError:
+        return None
+    if math.isnan(numeric) or math.isinf(numeric):
+        return None
+    return numeric
+
+
+def none_if_nd(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return None if cleaned.upper() in {"", "N/D"} else cleaned
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -199,6 +309,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             params = urllib.parse.parse_qs(parsed.query)
             if parsed.path == "/api/universe":
                 data = cached("universe", load_universe, CACHE_TTL["universe"])
+                self.write_json(data)
+            elif parsed.path == "/api/quote":
+                symbols = ",".join(params.get("symbols", [""])).split(",")
+                clean_symbols = ",".join(sorted(clean_symbol(symbol) for symbol in symbols if clean_symbol(symbol)))
+                key = f"quote:{clean_symbols}"
+                data = cached(key, lambda: load_quotes(symbols), CACHE_TTL["quote"])
                 self.write_json(data)
             else:
                 self.write_json({"error": "Unknown endpoint"}, status=404)
