@@ -101,3 +101,123 @@ function signed(value) {
   return `${value >= 0 ? "+" : ""}${fmtPct.format(value)}%`;
 }
 
+function quoteScore(quote) {
+  const day = Number(quote.changePct || 0);
+  const liquidity = Math.log10(Math.max(Number(quote.volume || 1), 1));
+  const intradayRange = quote.high && quote.low && quote.close ? ((quote.high - quote.low) / quote.close) * 100 : 0;
+  return day * 1.8 + liquidity * 3 + intradayRange * 1.2;
+}
+
+async function loadUniverse() {
+  setStatus("universeStatus", "Loading universe");
+  const payload = await api("/api/universe");
+  state.universe = payload.items || [];
+  setStatus("universeStatus", `${fmtNum.format(payload.count || state.universe.length)} symbols from ${payload.source}`);
+}
+
+async function loadQuotes(symbols) {
+  if (!symbols.length) return [];
+  const payload = await api(`/api/quote?symbols=${encodeURIComponent(symbols.join(","))}`);
+  for (const quote of payload.items || []) {
+    state.quotes.set(quote.symbol, quote);
+  }
+  return payload.items || [];
+}
+
+function renderWatchlist(quotes) {
+  const wrap = $("watchCards");
+  if (!quotes.length) {
+    wrap.innerHTML = `<div class="empty">No watchlist quotes available.</div>`;
+    return;
+  }
+  wrap.innerHTML = quotes.map((quote) => `
+    <article class="watch-card" data-symbol="${quote.symbol}">
+      <div class="top"><strong>${quote.symbol}</strong><span class="${pctClass(quote.changePct)}">${pct(quote.changePct)}</span></div>
+      <b>${money(quote.close)}</b>
+      <small>Vol ${compact(quote.volume)} | ${quote.date || "latest"}</small>
+    </article>
+  `).join("");
+  wrap.querySelectorAll(".watch-card").forEach((card) => {
+    card.addEventListener("click", () => selectSymbol(card.dataset.symbol));
+  });
+}
+
+function updatePulse() {
+  const spy = state.quotes.get("SPY");
+  const qqq = state.quotes.get("QQQ");
+  $("spyPrice").textContent = money(spy?.close);
+  $("spyMove").textContent = `SPY ${pct(spy?.changePct)}`;
+  $("spyMove").className = pctClass(spy?.changePct);
+  $("qqqPrice").textContent = money(qqq?.close);
+  $("qqqMove").textContent = `QQQ ${pct(qqq?.changePct)}`;
+  $("qqqMove").className = pctClass(qqq?.changePct);
+
+  const breadthQuotes = [...state.quotes.values()].filter((q) => Number.isFinite(q.changePct) && !["SPY", "QQQ"].includes(q.symbol));
+  if (breadthQuotes.length) {
+    const advancing = breadthQuotes.filter((q) => q.changePct > 0).length / breadthQuotes.length;
+    const label = advancing > 0.6 ? "Risk On" : advancing < 0.4 ? "Defensive" : "Mixed";
+    $("riskGauge").textContent = label;
+    $("riskNote").textContent = `${Math.round(advancing * 100)}% watchlist advancing`;
+    $("regimeGauge").textContent = label.toUpperCase();
+    $("regimeNote").textContent = advancing > 0.6 ? "Momentum factors favored" : advancing < 0.4 ? "Protective posture favored" : "Selective tape";
+  }
+  const tone = $("newsTone").textContent;
+  const spyMove = Number(spy?.changePct || 0);
+  const qqqMove = Number(qqq?.changePct || 0);
+  const stack = spyMove + qqqMove + (tone === "Positive" ? 0.6 : tone === "Negative" ? -0.6 : 0);
+  $("signalStack").textContent = stack > 1 ? "LONG" : stack < -1 ? "HEDGE" : "WAIT";
+  $("signalNote").textContent = `Composite ${stack.toFixed(2)}`;
+  renderIndexRibbon();
+}
+
+function filteredUniverse() {
+  const mode = $("assetFilter").value;
+  return state.universe.filter((item) => {
+    if (mode === "stocks") return !item.etf;
+    if (mode === "etfs") return item.etf;
+    return true;
+  });
+}
+
+async function runScan() {
+  const size = Math.max(20, Math.min(700, Number($("scanSize").value) || 160));
+  const universe = filteredUniverse().slice(0, size);
+  setStatus("scanStatus", `Scanning ${universe.length}`);
+  const rows = [];
+  const chunkSize = 40;
+  for (let i = 0; i < universe.length; i += chunkSize) {
+    const chunk = universe.slice(i, i + chunkSize);
+    setStatus("scanStatus", `${i + 1}-${Math.min(i + chunkSize, universe.length)} / ${universe.length}`);
+    const quotes = await loadQuotes(chunk.map((item) => item.symbol));
+    for (const quote of quotes) {
+      const meta = state.universe.find((item) => item.symbol === quote.symbol) || {};
+      if (Number.isFinite(quote.close)) rows.push({ ...quote, ...meta, score: quoteScore(quote) });
+    }
+  }
+  rows.sort((a, b) => b.score - a.score);
+  renderScanner(rows.slice(0, 100));
+  setStatus("scanStatus", `${rows.length} ranked`);
+  updatePulse();
+}
+
+function renderScanner(rows) {
+  const body = $("scannerRows");
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="6" class="empty">Run a scan to rank symbols.</td></tr>`;
+    return;
+  }
+  body.innerHTML = rows.map((row) => `
+    <tr data-symbol="${row.symbol}">
+      <td class="symbol-cell">${row.symbol}</td>
+      <td class="name-cell" title="${row.name || ""}">${row.name || "--"}</td>
+      <td>${money(row.close)}</td>
+      <td class="${pctClass(row.changePct)}">${pct(row.changePct)}</td>
+      <td>${compact(row.volume)}</td>
+      <td>${row.score.toFixed(1)}</td>
+    </tr>
+  `).join("");
+  body.querySelectorAll("tr[data-symbol]").forEach((row) => {
+    row.addEventListener("click", () => selectSymbol(row.dataset.symbol));
+  });
+}
+
