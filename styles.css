@@ -96,3 +96,140 @@ button svg {
   font-weight: 800;
 }
 
+.app-header {
+  min-height: 38px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.brand-lockup,
+.status-strip,
+.button-row,
+.news-meta,
+.watch-card .top {
+  display: flex;
+  align-items: center;
+}
+
+.brand-lockup {
+  gap: 9px;
+  min-width: 0;
+}
+
+.brand-mark {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--amber);
+  color: var(--bg);
+  font-weight: 900;
+  font-size: 10px;
+  box-shadow: 0 0 16px rgba(255, 170, 0, 0.35);
+}
+
+.app-header h1,
+h2,
+p {
+  margin: 0;
+}
+
+.app-header h1 {
+  color: var(--ink-bright);
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 0 5px currentColor;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.status-strip {
+  gap: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.status-strip span,
+.pill {
+  border: 1px solid var(--line);
+  padding: 3px 7px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.status-strip .live-dot {
+  color: var(--green);
+  border-color: rgba(122, 220, 106, 0.35);
+}
+
+.workspace {
+  padding: 6px 8px 10px;
+}
+
+.index-ribbon {
+  height: 28px;
+  display: grid;
+  grid-template-columns: repeat(10, minmax(96px, 1fr));
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.index-cell {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-right: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+
+.index-cell:last-child {
+  border-right: 0;
+}
+
+.index-cell b {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.index-cell span {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.index-cell strong {
+  font-size: 10px;
+}
+
+.market-band {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 4px;
