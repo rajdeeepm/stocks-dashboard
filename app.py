@@ -289,6 +289,73 @@ def none_if_nd(value: str | None) -> str | None:
     return None if cleaned.upper() in {"", "N/D"} else cleaned
 
 
+def parse_range(range_name: str) -> date:
+    today = date.today()
+    ranges = {
+        "1d": today - timedelta(days=2),
+        "5d": today - timedelta(days=8),
+        "1m": today - timedelta(days=35),
+        "3m": today - timedelta(days=100),
+        "6m": today - timedelta(days=190),
+        "ytd": date(today.year, 1, 1),
+        "1y": today - timedelta(days=370),
+        "3y": today - timedelta(days=365 * 3 + 10),
+        "5y": today - timedelta(days=365 * 5 + 10),
+    }
+    return ranges.get(range_name, today - timedelta(days=370))
+
+
+def load_history(symbol: str, range_name: str) -> dict[str, Any]:
+    started = time.perf_counter()
+    normalized_range = str(range_name or "1y").strip().lower()
+    range_map = {
+        "1d": ("1d", "5m"),
+        "5d": ("5d", "30m"),
+        "1m": ("1mo", "1d"),
+        "3m": ("3mo", "1d"),
+        "6m": ("6mo", "1d"),
+        "ytd": ("ytd", "1d"),
+        "1y": ("1y", "1d"),
+        "3y": ("5y", "1wk"),
+        "5y": ("5y", "1wk"),
+    }
+    yahoo_range, interval = range_map.get(normalized_range, ("1y", "1d"))
+    params = urllib.parse.urlencode({"range": yahoo_range, "interval": interval})
+    payload = json.loads(fetch_text(f"{YAHOO_CHART}{urllib.parse.quote(yahoo_symbol(symbol))}?{params}"))
+    result = (payload.get("chart", {}).get("result") or [None])[0]
+    if not result:
+        return {"source": "yahoo-chart", "symbol": clean_symbol(symbol), "range": normalized_range, "interval": interval, "items": []}
+
+    timestamps = result.get("timestamp") or []
+    quote = ((result.get("indicators", {}).get("quote") or [{}])[0]) or {}
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
+    volumes = quote.get("volume") or []
+    start = parse_range(normalized_range)
+    prices = []
+    for index, timestamp in enumerate(timestamps):
+        row_dt = datetime.fromtimestamp(timestamp)
+        row_date = row_dt.date()
+        if row_date < start:
+            continue
+        prices.append(
+            {
+                "date": row_date.isoformat(),
+                "time": row_dt.time().replace(microsecond=0).isoformat(),
+                "datetime": row_dt.replace(microsecond=0).isoformat(),
+                "open": value_at(opens, index),
+                "high": value_at(highs, index),
+                "low": value_at(lows, index),
+                "close": value_at(closes, index),
+                "volume": value_at(volumes, index),
+            }
+        )
+    record_provider("yahoo-chart", "OK", int((time.perf_counter() - started) * 1000), f"history {clean_symbol(symbol)} {normalized_range} {interval}")
+    return {"source": "yahoo-chart", "symbol": clean_symbol(symbol), "range": normalized_range, "interval": interval, "items": prices}
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -315,6 +382,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 clean_symbols = ",".join(sorted(clean_symbol(symbol) for symbol in symbols if clean_symbol(symbol)))
                 key = f"quote:{clean_symbols}"
                 data = cached(key, lambda: load_quotes(symbols), CACHE_TTL["quote"])
+                self.write_json(data)
+            elif parsed.path == "/api/history":
+                symbol = params.get("symbol", ["SPY"])[0]
+                range_name = params.get("range", ["1y"])[0]
+                key = f"history:{clean_symbol(symbol)}:{range_name}"
+                data = cached(key, lambda: load_history(symbol, range_name), CACHE_TTL["history"])
                 self.write_json(data)
             else:
                 self.write_json({"error": "Unknown endpoint"}, status=404)
