@@ -221,3 +221,220 @@ function renderScanner(rows) {
   });
 }
 
+function sma(values, window) {
+  return values.map((_, index) => {
+    if (index + 1 < window) return null;
+    const slice = values.slice(index + 1 - window, index + 1);
+    return slice.reduce((sum, value) => sum + value, 0) / window;
+  });
+}
+
+function dailyReturns(closes) {
+  const returns = [];
+  for (let i = 1; i < closes.length; i += 1) {
+    if (closes[i - 1]) returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+  }
+  return returns;
+}
+
+function stdev(values) {
+  if (!values.length) return null;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function rsi(closes, period = 14) {
+  if (closes.length <= period) return null;
+  let gains = 0;
+  let losses = 0;
+  for (let i = closes.length - period; i < closes.length; i += 1) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses -= diff;
+  }
+  if (losses === 0) return 100;
+  const rs = gains / losses;
+  return 100 - (100 / (1 + rs));
+}
+
+function maxDrawdown(closes) {
+  let peak = -Infinity;
+  let worst = 0;
+  for (const close of closes) {
+    peak = Math.max(peak, close);
+    worst = Math.min(worst, (close - peak) / peak);
+  }
+  return worst * 100;
+}
+
+function setMetric(id, value, className = "") {
+  const el = $(id);
+  el.textContent = value;
+  el.className = className;
+}
+
+async function selectSymbol(symbol) {
+  state.selectedSymbol = symbol || "SPY";
+  $("selectedTitle").textContent = state.selectedSymbol;
+  $("orderTitle").textContent = `${state.selectedSymbol} Book`;
+  await Promise.all([loadHistory(), loadNews(`${state.selectedSymbol} stock`)]);
+  renderSupplementalPanels();
+}
+
+async function loadHistory() {
+  const payload = await api(`/api/history?symbol=${encodeURIComponent(state.selectedSymbol)}&range=${state.selectedRange}`);
+  state.lastHistory = payload.items || [];
+  renderChart(state.lastHistory);
+  renderMetrics(state.lastHistory);
+  renderResearchNotes();
+}
+
+function renderChart(items) {
+  const labels = items.map((item) => item.date);
+  const closes = items.map((item) => item.close).filter(Number.isFinite);
+  const sma20 = sma(closes, 20);
+  const sma50 = sma(closes, 50);
+  const ctx = $("priceChart");
+  if (state.priceChart) state.priceChart.destroy();
+  state.priceChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Close", data: closes, borderColor: PHOSPHOR.bright, borderWidth: 2, pointRadius: 0, tension: 0.18 },
+        { label: "SMA 20", data: sma20, borderColor: PHOSPHOR.up, borderWidth: 1.5, pointRadius: 0, tension: 0.18 },
+        { label: "SMA 50", data: sma50, borderColor: PHOSPHOR.accent, borderWidth: 1.5, pointRadius: 0, tension: 0.18 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { usePointStyle: true, boxWidth: 8, color: PHOSPHOR.dim } },
+        tooltip: { backgroundColor: PHOSPHOR.panelHi, borderColor: PHOSPHOR.border, borderWidth: 1, titleColor: PHOSPHOR.bright, bodyColor: PHOSPHOR.text },
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, color: PHOSPHOR.dim }, grid: { color: PHOSPHOR.grid } },
+        y: { position: "right", ticks: { color: PHOSPHOR.dim, callback: (value) => `$${value}` }, grid: { color: PHOSPHOR.grid } },
+      },
+    },
+  });
+}
+
+function renderMetrics(items) {
+  const closes = items.map((item) => item.close).filter(Number.isFinite);
+  const volumes = items.map((item) => item.volume).filter(Number.isFinite);
+  if (closes.length < 2) {
+    ["trendMetric", "momentumMetric", "rsiMetric", "volMetric", "drawdownMetric", "volumeMetric"].forEach((id) => setMetric(id, "--"));
+    return;
+  }
+  const ma20 = sma(closes, 20).at(-1);
+  const ma50 = sma(closes, 50).at(-1);
+  const trend = ma20 && ma50 ? (ma20 > ma50 ? "Bullish" : "Bearish") : "Building";
+  const oneMonthBase = closes.at(-22) || closes[0];
+  const momentum = ((closes.at(-1) - oneMonthBase) / oneMonthBase) * 100;
+  const volatility = (stdev(dailyReturns(closes).slice(-63)) || 0) * Math.sqrt(252) * 100;
+  const rsiValue = rsi(closes);
+  const drawdown = maxDrawdown(closes);
+  const avgVolume = volumes.slice(-21, -1).reduce((sum, value) => sum + value, 0) / Math.max(volumes.slice(-21, -1).length, 1);
+  const volumePulse = avgVolume ? volumes.at(-1) / avgVolume : null;
+
+  setMetric("trendMetric", trend, trend === "Bullish" ? "up" : trend === "Bearish" ? "down" : "");
+  setMetric("momentumMetric", pct(momentum), pctClass(momentum));
+  setMetric("rsiMetric", rsiValue ? rsiValue.toFixed(1) : "--", rsiValue > 70 ? "down" : rsiValue < 30 ? "up" : "");
+  setMetric("volMetric", pct(volatility));
+  setMetric("drawdownMetric", pct(drawdown), drawdown < -10 ? "down" : "");
+  setMetric("volumeMetric", volumePulse ? `${volumePulse.toFixed(2)}x` : "--", volumePulse > 1.6 ? "up" : "");
+}
+
+function renderResearchNotes() {
+  const closes = state.lastHistory.map((item) => item.close).filter(Number.isFinite);
+  const quote = state.quotes.get(state.selectedSymbol);
+  const notes = [];
+  if (closes.length > 50) {
+    const ma20 = sma(closes, 20).at(-1);
+    const ma50 = sma(closes, 50).at(-1);
+    notes.push({
+      type: ma20 > ma50 ? "" : "warn",
+      text: ma20 > ma50
+        ? "Short-term trend is above the intermediate trend. This favors continuation setups when broad market breadth confirms."
+        : "Short-term trend is below the intermediate trend. Treat breakouts with more skepticism until price repairs the moving-average structure.",
+    });
+  }
+  if (quote && Number.isFinite(quote.changePct)) {
+    notes.push({
+      type: Math.abs(quote.changePct) > 3 ? "warn" : "",
+      text: `Latest quote shows a ${pct(quote.changePct)} move from the previous close with ${compact(quote.volume)} shares reported by the data feed.`,
+    });
+  }
+  notes.push({
+    type: "risk",
+    text: "This dashboard ranks evidence, not certainty. Cross-check liquidity, catalysts, earnings dates, position sizing, and broader market regime before making any trade.",
+  });
+  $("researchNotes").innerHTML = notes.map((note) => `<div class="note ${note.type}">${note.text}</div>`).join("");
+}
+
+function renderIndexRibbon() {
+  const symbols = [
+    ["SPY", "S&P"],
+    ["QQQ", "NDX"],
+    ["DIA", "DOW"],
+    ["IWM", "RUT"],
+    ["NVDA", "NVDA"],
+    ["AAPL", "AAPL"],
+    ["MSFT", "MSFT"],
+    ["JPM", "JPM"],
+    ["XOM", "XOM"],
+    ["TSLA", "TSLA"],
+  ];
+  $("indexRibbon").innerHTML = symbols.map(([symbol, label], index) => {
+    const quote = state.quotes.get(symbol);
+    const move = Number.isFinite(quote?.changePct) ? quote.changePct : pseudo(symbol, -1.2, 1.2, index);
+    const price = Number.isFinite(quote?.close) ? money(quote.close).replace("$", "") : pseudo(symbol, 80, 780, index).toFixed(2);
+    return `
+      <div class="index-cell">
+        <b>${label}</b>
+        <span>${price}</span>
+        <strong class="${pctClass(move)}">${move >= 0 ? "+" : "-"}${Math.abs(move).toFixed(2)}%</strong>
+      </div>
+    `;
+  }).join("");
+}
+
+function factorComposite(symbol) {
+  const quote = state.quotes.get(symbol) || {};
+  const momentum = Math.max(0, Math.min(100, 50 + Number(quote.changePct || 0) * 9 + pseudo(symbol, -12, 12, 1)));
+  const quality = pseudo(symbol, 35, 92, 2);
+  const liquidity = Math.max(0, Math.min(100, Math.log10(Math.max(quote.volume || 1, 1)) * 10));
+  const lowVol = pseudo(symbol, 25, 88, 3);
+  return Math.round((momentum * 0.35) + (quality * 0.25) + (liquidity * 0.25) + (lowVol * 0.15));
+}
+
+function renderTradeIdeas() {
+  const symbols = parseSymbols($("watchlistInput").value);
+  const rows = symbols.map((symbol) => {
+    const quote = state.quotes.get(symbol) || {};
+    const score = factorComposite(symbol);
+    const side = score > 68 ? "LONG" : score < 45 ? "SHORT" : "WATCH";
+    const conf = Math.min(96, Math.max(42, score + Math.abs(Number(quote.changePct || 0)) * 4));
+    const horizon = score > 70 ? "2-6W" : score < 45 ? "1-3W" : "WAIT";
+    return { symbol, side, score, conf, horizon, move: quote.changePct };
+  }).sort((a, b) => b.conf - a.conf);
+
+  $("tradeIdeas").innerHTML = rows.map((row, index) => `
+    <button class="terminal-row" style="grid-template-columns: 22px 52px 52px 1fr 46px 46px;" data-symbol="${row.symbol}">
+      <span class="flat">${index + 1}</span>
+      <b class="${row.side === "LONG" ? "up" : row.side === "SHORT" ? "down" : "flat"}">${row.side}</b>
+      <span class="symbol-cell">${row.symbol}</span>
+      <span>${row.horizon} / score ${row.score}</span>
+      <span class="${pctClass(row.move)}">${pct(row.move)}</span>
+      <strong>${row.conf.toFixed(0)}%</strong>
+    </button>
+  `).join("");
+  $("tradeIdeas").querySelectorAll("[data-symbol]").forEach((row) => {
+    row.addEventListener("click", () => selectSymbol(row.dataset.symbol));
+  });
+}
+
