@@ -356,6 +356,74 @@ def load_history(symbol: str, range_name: str) -> dict[str, Any]:
     return {"source": "yahoo-chart", "symbol": clean_symbol(symbol), "range": normalized_range, "interval": interval, "items": prices}
 
 
+def load_news(query: str, limit: int) -> dict[str, Any]:
+    started = time.perf_counter()
+    params = urllib.parse.urlencode({"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"})
+    text = fetch_text(f"{GOOGLE_NEWS_RSS}?{params}")
+    root = ET.fromstring(text)
+    items = []
+    for item in root.findall("./channel/item")[:limit]:
+        title = item.findtext("title", default="").strip()
+        published = item.findtext("pubDate", default="").strip()
+        link = item.findtext("link", default="").strip()
+        source = item.findtext("source", default="").strip()
+        items.append(
+            {
+                "title": title,
+                "published": published,
+                "link": link,
+                "source": source,
+                "sentiment": score_headline(title),
+            }
+        )
+    record_provider("google-news-rss", "OK", int((time.perf_counter() - started) * 1000), f"{len(items)} headlines for {query}")
+    return {"source": "google-news-rss", "query": query, "items": items}
+
+
+POSITIVE_WORDS = {
+    "beats",
+    "beat",
+    "surge",
+    "surges",
+    "upgrade",
+    "upgraded",
+    "growth",
+    "profit",
+    "rally",
+    "record",
+    "strong",
+    "bullish",
+    "raises",
+    "gain",
+    "gains",
+}
+
+NEGATIVE_WORDS = {
+    "miss",
+    "misses",
+    "cut",
+    "cuts",
+    "downgrade",
+    "downgraded",
+    "falls",
+    "fall",
+    "slump",
+    "slumps",
+    "weak",
+    "lawsuit",
+    "probe",
+    "loss",
+    "bearish",
+    "warning",
+    "risk",
+}
+
+
+def score_headline(title: str) -> int:
+    words = {word.strip(".,:;!?()[]{}\"'").lower() for word in title.split()}
+    return sum(1 for word in words if word in POSITIVE_WORDS) - sum(1 for word in words if word in NEGATIVE_WORDS)
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -388,6 +456,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 range_name = params.get("range", ["1y"])[0]
                 key = f"history:{clean_symbol(symbol)}:{range_name}"
                 data = cached(key, lambda: load_history(symbol, range_name), CACHE_TTL["history"])
+                self.write_json(data)
+            elif parsed.path == "/api/news":
+                query = params.get("query", ["market stocks"])[0]
+                limit = max(1, min(40, int(params.get("limit", ["12"])[0])))
+                key = f"news:{query}:{limit}"
+                data = cached(key, lambda: load_news(query, limit), CACHE_TTL["news"])
                 self.write_json(data)
             else:
                 self.write_json({"error": "Unknown endpoint"}, status=404)
