@@ -438,3 +438,195 @@ function renderTradeIdeas() {
   });
 }
 
+function renderOrderBook() {
+  const symbol = state.selectedSymbol;
+  const quote = state.quotes.get(symbol) || {};
+  const mid = Number(quote.close || 100);
+  const spread = Math.max(mid * pseudo(symbol, 0.00015, 0.0012, 4), 0.01);
+  const rows = [];
+  for (let i = 5; i >= 1; i -= 1) {
+    rows.push({ side: "ASK", price: mid + spread * i, size: Math.round(pseudo(symbol, 200, 2400, i + 10)), depth: pseudo(symbol, 22, 88, i + 15) });
+  }
+  for (let i = 1; i <= 5; i += 1) {
+    rows.push({ side: "BID", price: mid - spread * i, size: Math.round(pseudo(symbol, 200, 2600, i + 30)), depth: pseudo(symbol, 22, 92, i + 35) });
+  }
+  $("orderBook").innerHTML = rows.slice(0, 5).map((row) => bookRow(row)).join("")
+    + `<div class="mid-row"><span>MID ${money(mid)}</span><span>SPRD ${spread.toFixed(2)}</span></div>`
+    + rows.slice(5).map((row) => bookRow(row)).join("");
+}
+
+function bookRow(row) {
+  const cls = row.side === "BID" ? "bid up" : "ask down";
+  return `
+    <div class="book-row ${cls}" style="--depth:${row.depth}%">
+      <span>${row.side[0]}</span>
+      <span>${row.price.toFixed(2)}</span>
+      <span>${Math.round(row.size / 100)}</span>
+    </div>
+  `;
+}
+
+function renderOptionsFlow() {
+  const symbol = state.selectedSymbol;
+  const quote = state.quotes.get(symbol) || {};
+  const price = Number(quote.close || 100);
+  const rows = Array.from({ length: 8 }, (_, index) => {
+    const call = pseudo(symbol, 0, 1, index) > 0.42;
+    const strike = price * (1 + pseudo(symbol, -0.08, 0.1, index + 40));
+    const ratio = pseudo(symbol, 1.2, 8.6, index + 50);
+    const premium = pseudo(symbol, 0.35, 12.4, index + 60);
+    return { call, strike, ratio, premium, side: ratio > 4.8 ? "SWEEP" : "BLOCK", exp: `${7 + index * 7}D` };
+  });
+  $("optionsFlow").innerHTML = rows.map((row) => `
+    <div class="terminal-row" style="grid-template-columns: 22px 48px 38px 44px 44px 48px;">
+      <b class="${row.call ? "up" : "down"}">${row.call ? "C" : "P"}</b>
+      <span>${row.strike.toFixed(0)}</span>
+      <span class="flat">${row.exp}</span>
+      <span>${row.ratio.toFixed(1)}x</span>
+      <span>${row.premium.toFixed(2)}</span>
+      <strong class="${row.side === "SWEEP" ? "up" : "flat"}">${row.side}</strong>
+    </div>
+  `).join("");
+}
+
+function renderSectorHeatmap() {
+  const html = SECTORS.map(([sector, symbols], index) => {
+    const moves = symbols.map((symbol) => state.quotes.get(symbol)?.changePct).filter(Number.isFinite);
+    const perf = moves.length ? moves.reduce((sum, value) => sum + value, 0) / moves.length : pseudo(sector, -1.4, 1.5, index);
+    const alpha = Math.min(0.72, 0.16 + Math.abs(perf) / 2.2);
+    const heat = perf >= 0 ? "var(--green)" : "var(--red)";
+    return `
+      <div class="sector-cell ${index < 2 ? "large" : ""}" style="--heat:${heat};--heat-alpha:${alpha}">
+        <b>${sector}</b>
+        <strong class="${pctClass(perf)}">${signed(perf)}</strong>
+        <small>${symbols.slice(0, 3).join(" ")}</small>
+      </div>
+    `;
+  }).join("");
+  $("sectorHeatmap").innerHTML = html;
+}
+
+function renderMacroCalendar() {
+  $("macroCalendar").innerHTML = MACRO_EVENTS.map((event) => `
+    <div class="terminal-row" style="grid-template-columns: 34px 42px 34px 1fr 42px;">
+      <span class="flat">${event[0]}</span>
+      <span>${event[1]}</span>
+      <span class="symbol-cell">${event[2]}</span>
+      <span>${event[3]}</span>
+      <strong class="${event[4] === "HIGH" ? "down" : "flat"}">${event[4]}</strong>
+    </div>
+  `).join("");
+}
+
+function renderPortfolioPnl() {
+  $("portfolioPnl").innerHTML = PORTFOLIO.map((symbol, index) => {
+    const quote = state.quotes.get(symbol) || {};
+    const weight = pseudo(symbol, 4, 18, index);
+    const pnl = Number(quote.changePct || pseudo(symbol, -1.5, 1.5, index)) * weight * 8.5;
+    return `
+      <button class="terminal-row" style="grid-template-columns: 52px 44px 1fr 54px;" data-symbol="${symbol}">
+        <span class="symbol-cell">${symbol}</span>
+        <span>${weight.toFixed(1)}%</span>
+        <span class="${pctClass(quote.changePct)}">${pct(quote.changePct)}</span>
+        <strong class="${pnl >= 0 ? "up" : "down"}">${pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}</strong>
+      </button>
+    `;
+  }).join("");
+  $("portfolioPnl").querySelectorAll("[data-symbol]").forEach((row) => {
+    row.addEventListener("click", () => selectSymbol(row.dataset.symbol));
+  });
+}
+
+function renderSupplementalPanels() {
+  renderIndexRibbon();
+  renderTradeIdeas();
+  renderOrderBook();
+  renderOptionsFlow();
+  renderSectorHeatmap();
+  renderMacroCalendar();
+  renderPortfolioPnl();
+}
+
+async function loadNews(query = "stock market") {
+  const payload = await api(`/api/news?query=${encodeURIComponent(query)}&limit=14`);
+  const items = payload.items || [];
+  $("newsTitle").textContent = query.includes("stock") && query !== "stock market" ? `${state.selectedSymbol} Headlines` : "Market Headlines";
+  renderNews(items);
+  const totalTone = items.reduce((sum, item) => sum + Number(item.sentiment || 0), 0);
+  $("newsTone").textContent = totalTone > 1 ? "Positive" : totalTone < -1 ? "Negative" : "Neutral";
+  $("newsNote").textContent = `${items.length} recent headlines`;
+}
+
+function renderNews(items) {
+  const feed = $("newsFeed");
+  if (!items.length) {
+    feed.innerHTML = `<div class="empty">No headlines returned.</div>`;
+    return;
+  }
+  feed.innerHTML = items.map((item) => {
+    const tone = item.sentiment > 0 ? "up" : item.sentiment < 0 ? "down" : "";
+    const mins = item.published ? Math.max(1, Math.round((Date.now() - new Date(item.published).getTime()) / 60000)) : "--";
+    return `
+      <article class="news-item">
+        <span class="flat">${Number.isFinite(mins) ? `${mins}m` : "--"}</span>
+        <a href="${item.link}" target="_blank" rel="noopener noreferrer">${item.title}</a>
+        <span class="sentiment ${tone}">T${item.sentiment}</span>
+        <div class="news-meta">
+          <span>${item.source || "Google News"}</span>
+          <span>${item.published ? new Date(item.published).toLocaleString() : ""}</span>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+async function refreshAll() {
+  const symbols = parseSymbols($("watchlistInput").value);
+  const quotes = await loadQuotes([...symbols, "SPY", "QQQ", "DIA", "IWM", ...PORTFOLIO, ...SECTORS.flatMap((sector) => sector[1])]);
+  renderWatchlist(quotes.filter((quote) => symbols.includes(quote.symbol)));
+  renderScanner(symbols.map((symbol) => {
+    const quote = state.quotes.get(symbol) || {};
+    const meta = state.universe.find((item) => item.symbol === symbol) || { symbol };
+    return { ...quote, ...meta, symbol, score: quoteScore(quote) };
+  }).filter((row) => Number.isFinite(row.close)).sort((a, b) => b.score - a.score));
+  updatePulse();
+  renderSupplementalPanels();
+  await selectSymbol(state.selectedSymbol);
+}
+
+function wireEvents() {
+  $("refreshButton").addEventListener("click", () => refreshAll().catch(showError));
+  $("scanButton").addEventListener("click", () => runScan().catch(showError));
+  $("newsRefresh").addEventListener("click", () => loadNews(`${state.selectedSymbol} stock`).catch(showError));
+  $("rangeControls").querySelectorAll("button").forEach((button) => {
+    button.addEventListener("click", async () => {
+      $("rangeControls").querySelectorAll("button").forEach((item) => item.classList.remove("active"));
+      button.classList.add("active");
+      state.selectedRange = button.dataset.range;
+      await loadHistory().catch(showError);
+    });
+  });
+}
+
+function showError(error) {
+  console.error(error);
+  setStatus("scanStatus", "Check server log");
+  $("researchNotes").innerHTML = `<div class="note risk">${error.message}</div>`;
+}
+
+function tickClock() {
+  $("clock").textContent = new Date().toLocaleString();
+}
+
+async function init() {
+  wireEvents();
+  tickClock();
+  setInterval(tickClock, 1000);
+  if (window.lucide) window.lucide.createIcons();
+  await loadUniverse();
+  await refreshAll();
+  await loadNews("stock market");
+  renderSupplementalPanels();
+}
+
+init().catch(showError);
