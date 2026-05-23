@@ -738,3 +738,63 @@ tbody tr:hover {
   font-size: 10px;
 }
 
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(245, 179, 64, 0.18);
+}
+
+@media (max-width: 1300px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .market-band,
+  .metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .app-header,
+  .control-band {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .index-ribbon {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+    height: auto;
+  }
+
+  .market-band,
+  .metric-grid,
+  .watch-grid,
+  .split-panel,
+  .bottom-split {
+    grid-template-columns: 1fr;
+  }
+
+  .button-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .chart-head,
+  .panel-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .segmented {
+    width: 100%;
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
