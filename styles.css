@@ -341,3 +341,400 @@ p {
   grid-template-columns: 1fr 1fr;
 }
 
+.panel,
+.chart-surface {
+  overflow: hidden;
+}
+
+.panel-head,
+.chart-head {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 7px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.panel-head h2,
+.chart-head h2 {
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-head .eyebrow,
+.chart-head .eyebrow {
+  color: var(--amber);
+  margin-bottom: 0;
+}
+
+.table-wrap {
+  max-height: 390px;
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  padding: 4px 6px;
+  border-bottom: 1px dotted var(--line);
+  text-align: right;
+  white-space: nowrap;
+}
+
+th:first-child,
+td:first-child,
+th:nth-child(2),
+td:nth-child(2) {
+  text-align: left;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-hi);
+  color: var(--muted);
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+tbody tr {
+  cursor: pointer;
+}
+
+tbody tr:hover {
+  background: var(--panel-hi);
+}
+
+.symbol-cell {
+  color: var(--amber);
+  font-weight: 800;
+}
+
+.name-cell {
+  color: var(--muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.up {
+  color: var(--green);
+}
+
+.down {
+  color: var(--red);
+}
+
+.flat {
+  color: var(--muted);
+}
+
+.watch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+}
+
+.watch-card {
+  border: 1px solid var(--line);
+  padding: 6px;
+  display: grid;
+  gap: 3px;
+  cursor: pointer;
+  background: #090704;
+  min-height: 58px;
+}
+
+.watch-card:hover {
+  border-color: var(--amber);
+  background: var(--panel-hi);
+}
+
+.watch-card .top {
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.watch-card strong {
+  color: var(--amber);
+  font-size: 12px;
+}
+
+.watch-card b {
+  color: var(--ink-bright);
+  font-size: 15px;
+}
+
+.watch-card small {
+  color: var(--muted);
+}
+
+.chart-surface {
+  min-height: 442px;
+}
+
+.segmented {
+  display: inline-grid;
+  grid-template-columns: repeat(5, 36px);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.segmented button {
+  min-height: 24px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  padding: 0;
+  font-size: 10px;
+  font-weight: 800;
+  background: transparent;
+  color: var(--muted);
+}
+
+.segmented button:last-child {
+  border-right: 0;
+}
+
+.chart-box {
+  height: 408px;
+  padding: 8px;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.metric {
+  min-height: 70px;
+  padding: 7px;
+  display: grid;
+  align-content: space-between;
+}
+
+.metric strong {
+  color: var(--ink-bright);
+  font-size: 17px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.notes {
+  padding: 6px 7px;
+  display: grid;
+  gap: 5px;
+}
+
+.note {
+  border-left: 2px solid var(--amber);
+  padding-left: 7px;
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.note.warn {
+  border-color: var(--ink-bright);
+}
+
+.note.risk {
+  border-color: var(--red);
+}
+
+.icon-button {
+  width: 28px;
+  padding: 0;
+}
+
+.news-feed {
+  max-height: 330px;
+  overflow: auto;
+  padding: 2px 7px 6px;
+}
+
+.news-item {
+  display: grid;
+  grid-template-columns: 34px 1fr 42px;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: 1px dotted var(--line);
+}
+
+.news-item a {
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.news-item a:hover {
+  color: var(--ink-bright);
+}
+
+.news-meta {
+  grid-column: 1 / -1;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 9px;
+  flex-wrap: wrap;
+}
+
+.sentiment {
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+}
+
+.terminal-list {
+  padding: 4px;
+  display: grid;
+  gap: 2px;
+  max-height: 235px;
+  overflow: auto;
+}
+
+.terminal-row {
+  display: grid;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 2px 4px;
+  border-bottom: 1px dotted var(--line);
+  color: var(--ink);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-row:hover {
+  background: var(--panel-hi);
+}
+
+.book-grid {
+  padding: 4px;
+  display: grid;
+  gap: 2px;
+}
+
+.book-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr 1fr;
+  gap: 5px;
+  min-height: 20px;
+  align-items: center;
+  padding: 1px 4px;
+  border-bottom: 1px dotted var(--line);
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.book-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--depth, 30%);
+  opacity: 0.16;
+  background: currentColor;
+}
+
+.book-row.ask::before {
+  left: 0;
+}
+
+.book-row.bid::before {
+  right: 0;
+}
+
+.book-row > span {
+  position: relative;
+  z-index: 1;
+}
+
+.mid-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px;
+  margin: 2px 0;
+  border-top: 1px solid var(--line-hi);
+  border-bottom: 1px solid var(--line-hi);
+  color: var(--amber);
+  font-weight: 800;
+}
+
+.sector-heatmap {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  grid-auto-rows: 54px;
+  gap: 2px;
+  padding: 3px;
+}
+
+.sector-cell {
+  position: relative;
+  display: grid;
+  align-content: space-between;
+  padding: 5px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  background: var(--panel-hi);
+}
+
+.sector-cell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--heat);
+  opacity: var(--heat-alpha);
+}
+
+.sector-cell b,
+.sector-cell strong,
+.sector-cell small {
+  position: relative;
+  z-index: 1;
+}
+
+.sector-cell b {
+  color: var(--ink-bright);
+  font-size: 10px;
+}
+
+.sector-cell strong {
+  font-size: 16px;
+}
+
+.sector-cell small {
+  color: var(--muted);
+}
+
+.sector-cell.large {
+  grid-column: span 2;
+  grid-row: span 2;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 10px;
+  font-size: 10px;
+}
+
