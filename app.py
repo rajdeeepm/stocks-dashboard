@@ -129,6 +129,38 @@ MARKET_UNIVERSES = {
             ("8058.T", "Mitsubishi Corporation", "Tokyo", "Stock"),
         ],
     },
+    "HONGKONG": {
+        "name": "Hong Kong / China",
+        "currency": "HKD/CNY",
+        "symbols": [
+            ("0700.HK", "Tencent Holdings", "HKEX", "Stock"),
+            ("9988.HK", "Alibaba Group", "HKEX", "Stock"),
+            ("3690.HK", "Meituan", "HKEX", "Stock"),
+            ("0939.HK", "China Construction Bank", "HKEX", "Stock"),
+            ("1299.HK", "AIA Group", "HKEX", "Stock"),
+            ("1810.HK", "Xiaomi", "HKEX", "Stock"),
+            ("2318.HK", "Ping An Insurance", "HKEX", "Stock"),
+            ("9618.HK", "JD.com", "HKEX", "Stock"),
+            ("0005.HK", "HSBC Holdings", "HKEX", "Stock"),
+            ("0388.HK", "Hong Kong Exchanges", "HKEX", "Stock"),
+        ],
+    },
+    "AUSTRALIA": {
+        "name": "Australia",
+        "currency": "AUD",
+        "symbols": [
+            ("BHP.AX", "BHP Group", "ASX", "Stock"),
+            ("CBA.AX", "Commonwealth Bank", "ASX", "Stock"),
+            ("CSL.AX", "CSL", "ASX", "Stock"),
+            ("NAB.AX", "National Australia Bank", "ASX", "Stock"),
+            ("WBC.AX", "Westpac Banking", "ASX", "Stock"),
+            ("ANZ.AX", "ANZ Group", "ASX", "Stock"),
+            ("MQG.AX", "Macquarie Group", "ASX", "Stock"),
+            ("WES.AX", "Wesfarmers", "ASX", "Stock"),
+            ("WOW.AX", "Woolworths Group", "ASX", "Stock"),
+            ("RIO.AX", "Rio Tinto", "ASX", "Stock"),
+        ],
+    },
 }
 
 
@@ -385,6 +417,74 @@ def load_japan_universe() -> list[dict[str, Any]]:
         )
     if not items:
         raise ValueError("JPX directory returned no rows")
+    return dedupe_items(items)
+
+
+def load_asx_universe() -> list[dict[str, Any]]:
+    text = fetch_text(ASX_LISTED, timeout=25)
+    lines = text.splitlines()
+    header_index = next((idx for idx, line in enumerate(lines) if line.startswith("Company name,")), -1)
+    if header_index < 0:
+        raise ValueError("ASX directory header not found")
+    rows = csv.DictReader(lines[header_index:])
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        code = clean_symbol(row.get("ASX code", ""))
+        name = clean_cell(row.get("Company name") or code)
+        if not code or not name:
+            continue
+        items.append(
+            {
+                "symbol": f"{code}.AX",
+                "name": name,
+                "exchange": "ASX",
+                "assetType": "Stock",
+                "sector": clean_cell(row.get("GICS industry group")),
+                "etf": False,
+                "market": "AUSTRALIA",
+                "currency": "AUD",
+            }
+        )
+    if not items:
+        raise ValueError("ASX directory returned no rows")
+    return dedupe_items(items)
+
+
+def load_hongkong_universe() -> list[dict[str, Any]]:
+    rows = xlsx_rows(fetch_bytes(HKEX_SECURITIES, timeout=30))
+    header_index = next(
+        (idx for idx, row in enumerate(rows) if "Stock Code" in row and "Name of Securities" in row),
+        -1,
+    )
+    if header_index < 0:
+        raise ValueError("HKEX directory header not found")
+    headers = rows[header_index]
+    records = dict_rows(headers, rows[header_index + 1 :])
+    items: list[dict[str, Any]] = []
+    for row in records:
+        code = clean_cell(row.get("Stock Code"))
+        name = clean_cell(row.get("Name of Securities") or code)
+        category = clean_cell(row.get("Category"))
+        if not code or not name or (category and "equity" not in category.lower()):
+            continue
+        digits = "".join(ch for ch in code if ch.isdigit())
+        symbol_code = str(int(digits)).zfill(4) if digits else code
+        items.append(
+            {
+                "symbol": f"{symbol_code}.HK",
+                "name": name,
+                "exchange": "HKEX",
+                "assetType": "Stock",
+                "category": category,
+                "subCategory": clean_cell(row.get("Sub-Category")),
+                "isin": clean_cell(row.get("ISIN")),
+                "etf": False,
+                "market": "HONGKONG",
+                "currency": clean_cell(row.get("Trading Currency")) or "HKD",
+            }
+        )
+    if not items:
+        raise ValueError("HKEX directory returned no rows")
     return dedupe_items(items)
 
 
