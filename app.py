@@ -71,6 +71,33 @@ FALLBACK_UNIVERSE = [
     {"symbol": "QQQ", "name": "Invesco QQQ Trust", "exchange": "NASDAQ", "assetType": "ETF", "etf": True},
 ]
 
+YAHOO_EXCHANGE_SUFFIXES = {
+    "AX", "L", "TO", "V", "NE", "NS", "BO", "T", "HK", "SS", "SZ", "KS", "KQ", "SI",
+    "PA", "AS", "BR", "DE", "F", "MI", "MC", "SW", "ST", "CO", "OL", "HE", "SA", "MX",
+}
+
+MARKET_UNIVERSES = {
+    "US": {
+        "name": "United States",
+        "currency": "USD",
+        "symbols": [
+            ("NVDA", "NVIDIA Corporation", "NASDAQ", "Stock"),
+            ("AAPL", "Apple Inc.", "NASDAQ", "Stock"),
+            ("MSFT", "Microsoft Corporation", "NASDAQ", "Stock"),
+            ("GOOGL", "Alphabet Inc. Class A", "NASDAQ", "Stock"),
+            ("AMZN", "Amazon.com Inc.", "NASDAQ", "Stock"),
+            ("META", "Meta Platforms Inc.", "NASDAQ", "Stock"),
+            ("TSLA", "Tesla Inc.", "NASDAQ", "Stock"),
+            ("JPM", "JPMorgan Chase & Co.", "NYSE", "Stock"),
+            ("LLY", "Eli Lilly & Co.", "NYSE", "Stock"),
+            ("XOM", "Exxon Mobil Corporation", "NYSE", "Stock"),
+            ("SPY", "SPDR S&P 500 ETF Trust", "NYSE Arca", "ETF"),
+            ("QQQ", "Invesco QQQ Trust", "NASDAQ", "ETF"),
+        ],
+    },
+}
+
+
 def cached(key: str, loader, ttl: int):
     now = time.time()
     entry = cache.get(key)
@@ -109,6 +136,67 @@ def clean_cell(value: Any) -> str:
     return text
 
 
+def yahoo_symbol(symbol: str) -> str:
+    normalized = clean_symbol(symbol)
+    if "." in normalized:
+        suffix = normalized.rsplit(".", 1)[1]
+        if suffix in YAHOO_EXCHANGE_SUFFIXES:
+            return normalized
+    return normalized.replace(".", "-")
+
+
+def market_config(market: str) -> tuple[str, dict[str, Any]]:
+    key = str(market or "US").upper()
+    if key not in MARKET_UNIVERSES:
+        key = "US"
+    return key, MARKET_UNIVERSES[key]
+
+
+def curated_market_items(market: str) -> list[dict[str, Any]]:
+    key, config = market_config(market)
+    return [
+        {
+            "symbol": symbol,
+            "name": name,
+            "exchange": exchange,
+            "assetType": asset_type,
+            "etf": asset_type.upper() == "ETF",
+            "market": key,
+            "currency": config["currency"],
+        }
+        for symbol, name, exchange, asset_type in config["symbols"]
+    ]
+
+
+def dedupe_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for item in items:
+        symbol = clean_symbol(str(item.get("symbol", "")))
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        copy = dict(item)
+        copy["symbol"] = symbol
+        out.append(copy)
+    return out
+
+
+def market_list_payload() -> dict[str, Any]:
+    return {
+        "source": "public-exchange-directories-with-curated-fallbacks",
+        "items": [
+            {
+                "id": key,
+                "name": config["name"],
+                "currency": config["currency"],
+                "count": len(config["symbols"]),
+            }
+            for key, config in MARKET_UNIVERSES.items()
+        ],
+    }
+
+
 def parse_nasdaq_universe_items() -> list[dict[str, Any]]:
     payload = cached("universe", load_universe, CACHE_TTL["universe"])
     return [
@@ -123,6 +211,23 @@ def parse_nasdaq_universe_items() -> list[dict[str, Any]]:
         }
         for item in payload.get("items", [])
     ]
+
+
+def market_items(market: str) -> list[dict[str, Any]]:
+    return market_universe_payload(market)["items"]
+
+
+def static_market_universe_payload(market: str) -> dict[str, Any]:
+    key, config = market_config(market)
+    items = curated_market_items(key)
+    return {
+        "source": "local-global-market-registry",
+        "market": key,
+        "name": config["name"],
+        "currency": config["currency"],
+        "count": len(items),
+        "items": items,
+    }
 
 
 def parse_pipe_table(text: str) -> list[dict[str, str]]:
@@ -445,6 +550,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/universe":
                 data = cached("universe", load_universe, CACHE_TTL["universe"])
                 self.write_json(data)
+            elif parsed.path == "/api/markets":
+                self.write_json(market_list_payload())
+            elif parsed.path == "/api/market/universe":
+                market = params.get("market", ["US"])[0]
+                self.write_json(market_universe_payload(market))
             elif parsed.path == "/api/quote":
                 symbols = ",".join(params.get("symbols", [""])).split(",")
                 clean_symbols = ",".join(sorted(clean_symbol(symbol) for symbol in symbols if clean_symbol(symbol)))
