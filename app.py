@@ -95,6 +95,24 @@ MARKET_UNIVERSES = {
             ("QQQ", "Invesco QQQ Trust", "NASDAQ", "ETF"),
         ],
     },
+    "INDIA": {
+        "name": "India",
+        "currency": "INR",
+        "symbols": [
+            ("RELIANCE.NS", "Reliance Industries", "NSE", "Stock"),
+            ("TCS.NS", "Tata Consultancy Services", "NSE", "Stock"),
+            ("HDFCBANK.NS", "HDFC Bank", "NSE", "Stock"),
+            ("INFY.NS", "Infosys", "NSE", "Stock"),
+            ("ICICIBANK.NS", "ICICI Bank", "NSE", "Stock"),
+            ("BHARTIARTL.NS", "Bharti Airtel", "NSE", "Stock"),
+            ("SBIN.NS", "State Bank of India", "NSE", "Stock"),
+            ("LT.NS", "Larsen & Toubro", "NSE", "Stock"),
+            ("ITC.NS", "ITC", "NSE", "Stock"),
+            ("MARUTI.NS", "Maruti Suzuki India", "NSE", "Stock"),
+            ("NESTLEIND.NS", "Nestle India", "NSE", "Stock"),
+            ("TITAN.NS", "Titan Company", "NSE", "Stock"),
+        ],
+    },
 }
 
 
@@ -211,6 +229,34 @@ def parse_nasdaq_universe_items() -> list[dict[str, Any]]:
         }
         for item in payload.get("items", [])
     ]
+
+
+def load_india_universe() -> list[dict[str, Any]]:
+    text = fetch_text(NSE_EQUITY_LIST, timeout=20)
+    rows = csv.DictReader(text.splitlines())
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        symbol = clean_symbol(row.get("SYMBOL", ""))
+        name = (row.get("NAME OF COMPANY") or symbol).strip()
+        series = (row.get(" SERIES") or row.get("SERIES") or "").strip().upper()
+        if not symbol or not name:
+            continue
+        items.append(
+            {
+                "symbol": f"{symbol}.NS",
+                "name": name.title() if name.isupper() else name,
+                "exchange": "NSE",
+                "assetType": "Stock",
+                "series": series,
+                "isin": (row.get(" ISIN NUMBER") or row.get("ISIN NUMBER") or "").strip(),
+                "etf": False,
+                "market": "INDIA",
+                "currency": "INR",
+            }
+        )
+    if not items:
+        raise ValueError("NSE equity directory returned no rows")
+    return dedupe_items(items)
 
 
 def market_items(market: str) -> list[dict[str, Any]]:
