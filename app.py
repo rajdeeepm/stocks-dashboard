@@ -113,6 +113,22 @@ MARKET_UNIVERSES = {
             ("TITAN.NS", "Titan Company", "NSE", "Stock"),
         ],
     },
+    "JAPAN": {
+        "name": "Japan",
+        "currency": "JPY",
+        "symbols": [
+            ("7203.T", "Toyota Motor", "Tokyo", "Stock"),
+            ("6758.T", "Sony Group", "Tokyo", "Stock"),
+            ("9984.T", "SoftBank Group", "Tokyo", "Stock"),
+            ("8306.T", "Mitsubishi UFJ Financial", "Tokyo", "Stock"),
+            ("6861.T", "Keyence", "Tokyo", "Stock"),
+            ("8035.T", "Tokyo Electron", "Tokyo", "Stock"),
+            ("6098.T", "Recruit Holdings", "Tokyo", "Stock"),
+            ("9432.T", "Nippon Telegraph & Telephone", "Tokyo", "Stock"),
+            ("6501.T", "Hitachi", "Tokyo", "Stock"),
+            ("8058.T", "Mitsubishi Corporation", "Tokyo", "Stock"),
+        ],
+    },
 }
 
 
@@ -139,6 +155,19 @@ def fetch_text(url: str, timeout: int = 15) -> str:
             return response.read().decode("utf-8", errors="replace")
 
 
+def fetch_bytes(url: str, timeout: int = 20) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return response.read()
+    except urllib.error.URLError as exc:
+        if "CERTIFICATE_VERIFY_FAILED" not in str(exc):
+            raise
+        context = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            return response.read()
+
+
 def parse_bool(value: str | None) -> bool:
     return str(value or "").strip().upper() in {"Y", "YES", "TRUE", "1"}
 
@@ -152,6 +181,66 @@ def clean_cell(value: Any) -> str:
     if text.endswith(".0") and text[:-2].isdigit():
         return text[:-2]
     return text
+
+
+def xlsx_col_index(cell_ref: str) -> int | None:
+    letters = "".join(ch for ch in cell_ref.upper() if ch.isalpha())
+    if not letters:
+        return None
+    index = 0
+    for ch in letters:
+        index = index * 26 + (ord(ch) - ord("A") + 1)
+    return index - 1
+
+
+def xlsx_rows(data: bytes) -> list[list[str]]:
+    with zipfile.ZipFile(io.BytesIO(data)) as workbook:
+        shared: list[str] = []
+        if "xl/sharedStrings.xml" in workbook.namelist():
+            root = ET.fromstring(workbook.read("xl/sharedStrings.xml"))
+            ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+            for item in root.findall("x:si", ns):
+                parts = [node.text or "" for node in item.findall(".//x:t", ns)]
+                shared.append("".join(parts))
+
+        sheet_name = "xl/worksheets/sheet1.xml"
+        if sheet_name not in workbook.namelist():
+            sheet_name = next(name for name in workbook.namelist() if name.startswith("xl/worksheets/sheet"))
+        root = ET.fromstring(workbook.read(sheet_name))
+        ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        rows: list[list[str]] = []
+        for row in root.findall(".//x:sheetData/x:row", ns):
+            values: list[str] = []
+            for cell in row.findall("x:c", ns):
+                cell_type = cell.attrib.get("t", "")
+                value_node = cell.find("x:v", ns)
+                inline_node = cell.find(".//x:t", ns)
+                value = ""
+                if cell_type == "s" and value_node is not None:
+                    idx = int(value_node.text or "0")
+                    value = shared[idx] if idx < len(shared) else ""
+                elif inline_node is not None:
+                    value = inline_node.text or ""
+                elif value_node is not None:
+                    value = value_node.text or ""
+                col_index = xlsx_col_index(cell.attrib.get("r", ""))
+                if col_index is None:
+                    col_index = len(values)
+                while len(values) <= col_index:
+                    values.append("")
+                values[col_index] = clean_cell(value)
+            if any(values):
+                rows.append(values)
+        return rows
+
+
+def dict_rows(headers: list[str], rows: list[list[str]]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for row in rows:
+        item = {headers[index]: row[index] if index < len(row) else "" for index in range(len(headers))}
+        if any(item.values()):
+            out.append(item)
+    return out
 
 
 def yahoo_symbol(symbol: str) -> str:
@@ -256,6 +345,46 @@ def load_india_universe() -> list[dict[str, Any]]:
         )
     if not items:
         raise ValueError("NSE equity directory returned no rows")
+    return dedupe_items(items)
+
+
+def load_japan_universe() -> list[dict[str, Any]]:
+    try:
+        import xlrd
+    except ImportError as exc:
+        raise RuntimeError("JPX directory requires xlrd to read the official XLS file") from exc
+
+    workbook = xlrd.open_workbook(file_contents=fetch_bytes(JPX_LISTED, timeout=30))
+    sheet = workbook.sheet_by_index(0)
+    headers = [clean_cell(sheet.cell_value(0, col)) for col in range(sheet.ncols)]
+    rows = []
+    for row_index in range(1, sheet.nrows):
+        row = {headers[col]: clean_cell(sheet.cell_value(row_index, col)) for col in range(sheet.ncols)}
+        rows.append(row)
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        local_code = clean_symbol(row.get("Local Code", ""))
+        name = clean_cell(row.get("Name (English)") or row.get("Name") or local_code)
+        section = clean_cell(row.get("Section/Products"))
+        if not local_code or not name:
+            continue
+        asset_type = "ETF" if "ETF" in section.upper() else "REIT" if "REIT" in section.upper() else "Stock"
+        items.append(
+            {
+                "symbol": f"{local_code}.T",
+                "name": name,
+                "exchange": "JPX",
+                "assetType": asset_type,
+                "sector": clean_cell(row.get("33 Sector(name)")),
+                "section": section,
+                "etf": asset_type == "ETF",
+                "market": "JAPAN",
+                "currency": "JPY",
+            }
+        )
+    if not items:
+        raise ValueError("JPX directory returned no rows")
     return dedupe_items(items)
 
 
