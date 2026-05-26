@@ -33,3 +33,27 @@ The app is built for personal research and education. It does not place trades a
 - Charts close price with 20-day and 50-day moving averages.
 - Calculates trend, 1-month momentum, RSI, volatility, drawdown, and volume pulse.
 - Pulls market or symbol-specific Google News headlines and applies lightweight headline-tone scoring.
+- Adds a global market dashboard selector in the Phosphor header. Each market gets its own scoped universe, movers, watchlist, correlation matrix, quote refresh, and index ribbon.
+- Keeps the symbol picker broader than the live quote loop: the dropdown/search uses the market directory, while dashboard panels quote a liquid focus list to stay responsive.
+
+## Global Market Dashboards
+
+The `MKT` dropdown currently supports:
+
+- United States
+- India
+- Japan
+- United Kingdom
+- Europe
+- Hong Kong / China
+- Canada
+- Australia
+
+Non-US symbols use Yahoo Finance exchange suffixes such as `.NS`, `.T`, `.L`, `.HK`, `.TO`, and `.AX`.
+
+Coverage today:
+
+- United States: Nasdaq Trader listed and other-listed directories, currently thousands of tradable instruments.
+- India: NSE official equity CSV, currently thousands of listed equities.
+- Japan, UK, Europe, Hong Kong / China, Canada, Australia: curated focus directories with custom Yahoo-symbol entry in the picker.
+

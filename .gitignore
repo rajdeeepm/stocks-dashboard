@@ -3,6 +3,11 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Local data / backups
+research.db
+*.db
+stocks.zip
+
 # Env / secrets
 .env
 .env.local
