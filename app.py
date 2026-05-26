@@ -129,6 +129,38 @@ MARKET_UNIVERSES = {
             ("8058.T", "Mitsubishi Corporation", "Tokyo", "Stock"),
         ],
     },
+    "UK": {
+        "name": "United Kingdom",
+        "currency": "GBP",
+        "symbols": [
+            ("AZN.L", "AstraZeneca", "LSE", "Stock"),
+            ("SHEL.L", "Shell", "LSE", "Stock"),
+            ("HSBA.L", "HSBC Holdings", "LSE", "Stock"),
+            ("ULVR.L", "Unilever", "LSE", "Stock"),
+            ("BP.L", "BP", "LSE", "Stock"),
+            ("GSK.L", "GSK", "LSE", "Stock"),
+            ("RIO.L", "Rio Tinto", "LSE", "Stock"),
+            ("DGE.L", "Diageo", "LSE", "Stock"),
+            ("LSEG.L", "London Stock Exchange Group", "LSE", "Stock"),
+            ("BARC.L", "Barclays", "LSE", "Stock"),
+        ],
+    },
+    "EUROPE": {
+        "name": "Europe",
+        "currency": "EUR/CHF",
+        "symbols": [
+            ("ASML.AS", "ASML Holding", "Euronext Amsterdam", "Stock"),
+            ("MC.PA", "LVMH", "Euronext Paris", "Stock"),
+            ("SAP.DE", "SAP", "XETRA", "Stock"),
+            ("SIE.DE", "Siemens", "XETRA", "Stock"),
+            ("AIR.PA", "Airbus", "Euronext Paris", "Stock"),
+            ("OR.PA", "L'Oreal", "Euronext Paris", "Stock"),
+            ("SAN.PA", "Sanofi", "Euronext Paris", "Stock"),
+            ("NESN.SW", "Nestle", "SIX", "Stock"),
+            ("NOVN.SW", "Novartis", "SIX", "Stock"),
+            ("ROG.SW", "Roche Holding", "SIX", "Stock"),
+        ],
+    },
     "HONGKONG": {
         "name": "Hong Kong / China",
         "currency": "HKD/CNY",
@@ -485,6 +517,75 @@ def load_hongkong_universe() -> list[dict[str, Any]]:
         )
     if not items:
         raise ValueError("HKEX directory returned no rows")
+    return dedupe_items(items)
+
+
+def load_uk_universe() -> list[dict[str, Any]]:
+    text = fetch_text(LSE_AIM_INSTRUMENTS, timeout=25)
+    rows = csv.DictReader(text.splitlines())
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        code = clean_symbol(row.get("Code", ""))
+        name = clean_cell(row.get("Name") or code)
+        if not code or not name:
+            continue
+        items.append(
+            {
+                "symbol": f"{code}.L",
+                "name": name,
+                "exchange": "LSE AIM",
+                "assetType": "Stock",
+                "sector": clean_cell(row.get("Sector")),
+                "location": clean_cell(row.get("Location")),
+                "etf": False,
+                "market": "UK",
+                "currency": "GBP",
+            }
+        )
+    items = curated_market_items("UK") + items
+    if not items:
+        raise ValueError("LSE AIM directory returned no rows")
+    return dedupe_items(items)
+
+
+def load_europe_universe() -> list[dict[str, Any]]:
+    text = fetch_text(XETRA_INSTRUMENTS, timeout=30)
+    lines = text.splitlines()
+    header_index = next((idx for idx, line in enumerate(lines) if "Instrument" in line and ";" in line), -1)
+    if header_index < 0:
+        raise ValueError("Xetra directory header not found")
+    rows = csv.DictReader(lines[header_index:], delimiter=";")
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        status = clean_cell(row.get("Instrument Status") or row.get("Product Status"))
+        if status and status.lower() not in {"active", "published"}:
+            continue
+        mnemonic = clean_symbol(
+            row.get("Instrument Mnemonic", "")
+            or row.get("Mnemonic", "")
+            or row.get("Issuer Specific Instrument Identifier", "")
+        )
+        name = clean_cell(row.get("Instrument") or row.get("Instrument Name") or mnemonic)
+        if not mnemonic or not name or len(mnemonic) > 12:
+            continue
+        group = clean_cell(row.get("Product Assignment Group") or row.get("Product Type"))
+        asset_type = "ETF" if "ETF" in group.upper() else "Stock"
+        items.append(
+            {
+                "symbol": f"{mnemonic}.DE",
+                "name": name,
+                "exchange": "Xetra",
+                "assetType": asset_type,
+                "isin": clean_cell(row.get("ISIN")),
+                "sector": group,
+                "etf": asset_type == "ETF",
+                "market": "EUROPE",
+                "currency": clean_cell(row.get("Currency")) or "EUR",
+            }
+        )
+    items = curated_market_items("EUROPE") + items
+    if not items:
+        raise ValueError("Xetra directory returned no rows")
     return dedupe_items(items)
 
 
