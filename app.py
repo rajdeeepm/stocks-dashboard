@@ -177,6 +177,22 @@ MARKET_UNIVERSES = {
             ("0388.HK", "Hong Kong Exchanges", "HKEX", "Stock"),
         ],
     },
+    "CANADA": {
+        "name": "Canada",
+        "currency": "CAD",
+        "symbols": [
+            ("RY.TO", "Royal Bank of Canada", "TSX", "Stock"),
+            ("TD.TO", "Toronto-Dominion Bank", "TSX", "Stock"),
+            ("SHOP.TO", "Shopify", "TSX", "Stock"),
+            ("ENB.TO", "Enbridge", "TSX", "Stock"),
+            ("CNR.TO", "Canadian National Railway", "TSX", "Stock"),
+            ("BNS.TO", "Bank of Nova Scotia", "TSX", "Stock"),
+            ("BAM.TO", "Brookfield Corporation", "TSX", "Stock"),
+            ("CNQ.TO", "Canadian Natural Resources", "TSX", "Stock"),
+            ("SU.TO", "Suncor Energy", "TSX", "Stock"),
+            ("TRI.TO", "Thomson Reuters", "TSX", "Stock"),
+        ],
+    },
     "AUSTRALIA": {
         "name": "Australia",
         "currency": "AUD",
@@ -587,6 +603,136 @@ def load_europe_universe() -> list[dict[str, Any]]:
     if not items:
         raise ValueError("Xetra directory returned no rows")
     return dedupe_items(items)
+
+
+def parse_tsx_payload(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    if stripped.startswith("jQuery"):
+        match = re.search(r"^[^(]+\((.*)\);?$", stripped, re.S)
+        if match:
+            stripped = match.group(1)
+    return json.loads(stripped)
+
+
+def load_canada_universe() -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for url, exchange, market_suffix in [
+        (TSX_DIRECTORY, "TSX", ".TO"),
+        (TSXV_DIRECTORY, "TSXV", ".V"),
+    ]:
+        payload = parse_tsx_payload(fetch_text(url, timeout=25))
+        for row in payload.get("results", []):
+            instruments = row.get("instruments") or [row]
+            for instrument in instruments:
+                symbol = clean_symbol(instrument.get("symbol") or row.get("symbol", ""))
+                name = clean_cell(instrument.get("name") or row.get("name") or symbol)
+                if not symbol or not name:
+                    continue
+                items.append(
+                    {
+                        "symbol": f"{symbol}{market_suffix}",
+                        "name": name,
+                        "exchange": exchange,
+                        "assetType": "Stock",
+                        "etf": False,
+                        "market": "CANADA",
+                        "currency": "CAD",
+                    }
+                )
+    items = curated_market_items("CANADA") + items
+    if not items:
+        raise ValueError("TMX directory returned no rows")
+    return dedupe_items(items)
+
+
+MARKET_PROVIDER_NAMES = {
+    "US": "nasdaq-universe",
+    "INDIA": "nse-universe",
+    "JAPAN": "jpx-universe",
+    "UK": "lse-aim-universe",
+    "EUROPE": "xetra-universe",
+    "HONGKONG": "hkex-universe",
+    "CANADA": "tsx-universe",
+    "AUSTRALIA": "asx-universe",
+}
+
+
+def load_market_universe(market: str) -> dict[str, Any]:
+    key, config = market_config(market)
+    if key == "US":
+        items = parse_nasdaq_universe_items()
+        source = "nasdaqtrader-listed-and-otherlisted"
+        fallback = False
+        record_provider("nasdaq-universe", "OK", None, f"{len(items)} instruments")
+    elif key == "INDIA":
+        items = load_india_universe()
+        source = "nse-official-equity-list"
+        fallback = False
+        record_provider("nse-universe", "OK", None, f"{len(items)} instruments")
+    elif key == "JAPAN":
+        items = load_japan_universe()
+        source = "jpx-official-listed-issues"
+        fallback = False
+        record_provider("jpx-universe", "OK", None, f"{len(items)} instruments")
+    elif key == "UK":
+        items = load_uk_universe()
+        source = "lse-official-aim-directory-plus-curated-main-market"
+        fallback = False
+        record_provider("lse-aim-universe", "OK", None, f"{len(items)} instruments")
+    elif key == "EUROPE":
+        items = load_europe_universe()
+        source = "xetra-official-tradable-instruments-plus-curated-europe"
+        fallback = False
+        record_provider("xetra-universe", "OK", None, f"{len(items)} instruments")
+    elif key == "HONGKONG":
+        items = load_hongkong_universe()
+        source = "hkex-official-securities-list"
+        fallback = False
+        record_provider("hkex-universe", "OK", None, f"{len(items)} instruments")
+    elif key == "CANADA":
+        items = load_canada_universe()
+        source = "tsx-tsxv-official-company-directory-plus-curated"
+        fallback = False
+        record_provider("tsx-universe", "OK", None, f"{len(items)} instruments")
+    elif key == "AUSTRALIA":
+        items = load_asx_universe()
+        source = "asx-official-listed-companies"
+        fallback = False
+        record_provider("asx-universe", "OK", None, f"{len(items)} instruments")
+    else:
+        items = curated_market_items(key)
+        source = "curated-yahoo-symbol-registry"
+        fallback = True
+    return {
+        "source": source,
+        "fallback": fallback,
+        "market": key,
+        "name": config["name"],
+        "currency": config["currency"],
+        "count": len(items),
+        "items": items,
+        "updatedAt": now_iso(),
+    }
+
+
+def market_universe_payload(market: str) -> dict[str, Any]:
+    key, config = market_config(market)
+    try:
+        return cached(f"market_universe:{key}", lambda: load_market_universe(key), CACHE_TTL["market_universe"])
+    except Exception as exc:
+        items = curated_market_items(key)
+        record_provider(MARKET_PROVIDER_NAMES.get(key, "nasdaq-universe"), "DEGRADED", None, str(exc))
+        return {
+            "source": "curated-yahoo-symbol-registry",
+            "fallback": True,
+            "market": key,
+            "name": config["name"],
+            "currency": config["currency"],
+            "count": len(items),
+            "items": items,
+            "updatedAt": now_iso(),
+            "detail": str(exc),
+        }
 
 
 def market_items(market: str) -> list[dict[str, Any]]:
