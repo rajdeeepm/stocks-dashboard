@@ -166,7 +166,115 @@
   const TICKERS = UNIVERSE.map(tickerProfile);
   const BY_SYM = Object.fromEntries(TICKERS.map(t => [t.sym, t]));
 
+  // News — Google News style headlines tied to specific tickers + market-wide
+  const NEWS_TEMPLATES = {
+    market: [
+      ['Fed officials signal patience as inflation prints come in mixed', 'Reuters',           18],
+      ['10-year Treasury yield retreats as bond auction sees strong demand', 'Bloomberg',     32],
+      ['Goldman raises year-end S&P target to 5800 citing AI capex cycle', 'CNBC',            54],
+      ['VIX collapses below 14 as positioning data shows record systematic length', 'WSJ',    72],
+      ['Dollar rally stalls ahead of Friday\'s PCE deflator release', 'FT',                  108],
+      ['Small caps lag again as breadth divergence widens to 18-month extreme', 'Barron\'s', 142],
+      ['China stimulus headlines lift industrial metals; copper +2.4%', 'Reuters',           188],
+      ['Powell to address Sintra conference; markets price 67% Sep cut odds', 'Bloomberg',   224],
+    ],
+    NVDA: [
+      ['NVIDIA partners with TSMC on advanced packaging for Rubin platform', 'Reuters',       12],
+      ['Hedge funds increased NVDA exposure 14% in latest 13F filings',     'Bloomberg',      28],
+      ['Morgan Stanley reiterates Top Pick; lifts target to $1,200',        'CNBC',           45],
+      ['Blackwell shipments tracking ahead of guide, channel checks show',  'Barron\'s',      88],
+      ['NVDA option skew flattens as call demand surges into earnings',     'WSJ',           134],
+    ],
+    AAPL: [
+      ['Apple Intelligence rollout in EU delayed amid DMA compliance review','Reuters',       22],
+      ['China iPhone shipments rebound 7% in May per Counterpoint',          'Bloomberg',     58],
+      ['Berkshire trimmed AAPL position by 13% in Q1 13F',                   'WSJ',          124],
+    ],
+    MSFT: [
+      ['Microsoft Copilot enterprise seats cross 1M; ARR run-rate accelerates','Bloomberg',   18],
+      ['Azure AI capacity expansion cited as driver of $13B capex guide',     'Reuters',     64],
+    ],
+    TSLA: [
+      ['Tesla robotaxi unveil pushed to August; shares slide premarket',     'Reuters',       9],
+      ['Cybertruck deliveries hit 1.7K in May per registration data',        'Electrek',     46],
+      ['Musk sells 5M shares to fund AI compute buildout',                   'WSJ',          92],
+    ],
+    AMZN: [
+      ['AWS announces $14B Mexico region commitment over 15 years',         'Bloomberg',     38],
+      ['Amazon ad business pacing for $60B run-rate in Q2',                 'CNBC',         118],
+    ],
+    META: [
+      ['Llama 3.1 405B benchmarks at parity with GPT-4 on key reasoning',   'Bloomberg',     24],
+      ['Reels ad load tested at 32% in select markets',                     'Reuters',       82],
+    ],
+    JPM:  [['JPM raises full-year NII guidance by $2B citing balance growth', 'Bloomberg', 36]],
+    AVGO: [['Broadcom VMware integration synergies tracking $1.5B ahead',    'WSJ',       72]],
+    AMD:  [['AMD MI325X pricing leaked at ~40% discount to NVDA H200',       'SemiAnalysis',54]],
+    GS:   [['Goldman trading desk had 14 straight $100M+ days in Q2',        'Bloomberg', 28]],
+    XOM:  [['Exxon Guyana production hits 650 KBD ahead of schedule',        'Reuters',   94]],
+    LLY:  [['Mounjaro Q2 scripts up 38% sequentially per IQVIA',             'Bloomberg', 18]],
+  };
+
+  function newsFor(sym) {
+    const base = (NEWS_TEMPLATES[sym] || []).slice();
+    base.push(...NEWS_TEMPLATES.market);
+    return base.map(([head, src, minsAgo]) => ({ head, src, minsAgo }));
+  }
+
+  // Insider transactions
+  const INSIDERS = {
+    NVDA: [
+      ['Huang, Jensen',     'CEO',           'SELL', 240000, 932.18,  '06/14'],
+      ['Kress, Colette',    'CFO',           'SELL', 110000, 928.50,  '06/12'],
+      ['Dally, William',    'Chief Scientist','SELL', 18000,  920.32,  '06/10'],
+      ['Coxe, Tench',       'Director',      'SELL', 50000,  912.04,  '06/07'],
+      ['Shoquist, Debora',  'EVP Operations','SELL', 8500,   908.18,  '06/05'],
+      ['Stevens, Mark A',   'Director',      'SELL', 25000,  894.55,  '05/31'],
+      ['Estrada, Cynthia',  'EVP HR',        'SELL', 4200,   882.40,  '05/24'],
+      ['Hudson, Tim',       'EVP',           'BUY',  1500,   851.32,  '05/15'],
+    ],
+    AAPL: [
+      ['Cook, Tim',         'CEO',           'SELL', 230000, 199.05,  '04/30'],
+      ['Maestri, Luca',     'CFO',           'SELL', 87420,  194.18,  '04/22'],
+      ['Adams, Katherine',  'GC',            'SELL', 22188,  192.40,  '04/15'],
+    ],
+    TSLA: [
+      ['Musk, Elon',        'CEO',           'SELL', 5000000,232.18,  '06/18'],
+      ['Taneja, Vaibhav',   'CFO',           'BUY',  15000,  168.42,  '04/02'],
+      ['Denholm, Robyn',    'Chair',         'SELL', 112084, 184.50,  '03/14'],
+    ],
+  };
+
+  function insidersFor(sym) {
+    return INSIDERS[sym] || [
+      [`${sym} Officer A`, 'CEO',  'SELL',  Math.round(10000+hash(sym+'1')%80000),  450, '06/12'],
+      [`${sym} Officer B`, 'CFO',  'SELL',  Math.round(5000+hash(sym+'2')%40000),   442, '06/05'],
+      [`${sym} Officer C`, 'Dir',  'BUY',   Math.round(500+hash(sym+'3')%4000),     431, '05/22'],
+    ];
+  }
+
+  // Options flow (unusual)
+  function optionsFlowFor(sym) {
+    const t = BY_SYM[sym]; if (!t) return [];
+    const rng = PRNG(hash(sym + 'OPT'));
+    const out = [];
+    const strikes = [];
+    for (let i = -4; i <= 4; i++) strikes.push(Math.round(t.price * (1 + i * 0.025)));
+    const exps = ['06/28', '07/19', '08/16', '09/20', '12/20'];
+    for (let i = 0; i < 12; i++) {
+      const isCall = rng() < 0.62;
+      const k = strikes[Math.floor(rng() * strikes.length)];
+      const exp = exps[Math.floor(rng() * exps.length)];
+      const vol = Math.round(500 + rng() * 28000);
+      const oi  = Math.round(100 + rng() * 5000);
+      const prem = +(0.4 + rng() * 18).toFixed(2);
+      const side = rng() < 0.55 ? 'ASK' : 'BID';
+      out.push({ type: isCall ? 'C' : 'P', strike: k, exp, vol, oi, prem, side, ratio: +(vol / Math.max(oi, 1)).toFixed(1) });
+    }
+    return out.sort((a, b) => b.ratio - a.ratio);
+  }
+
   window.MarketData = {
-    TICKERS, BY_SYM, INDICES, SECTORS, PRNG, hash,
+    TICKERS, BY_SYM, INDICES, SECTORS, newsFor, insidersFor, optionsFlowFor, PRNG, hash,
   };
 })();
