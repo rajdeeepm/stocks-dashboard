@@ -274,7 +274,113 @@
     return out.sort((a, b) => b.ratio - a.ratio);
   }
 
+  // Earnings calendar (next 10 days)
+  const EARNINGS = [
+    ['06/26', 'MU',   'Micron Technology',      'AMC', 1.18,  'Beat exp $1.16'],
+    ['06/27', 'NKE',  'Nike Inc',               'AMC', 0.84,  ''],
+    ['06/27', 'WBA',  'Walgreens Boots',        'BMO', 0.68,  ''],
+    ['07/02', 'STZ',  'Constellation Brands',   'BMO', 3.46,  ''],
+    ['07/11', 'PEP',  'PepsiCo Inc',            'BMO', 2.16,  ''],
+    ['07/12', 'JPM',  'JPMorgan Chase',         'BMO', 4.18,  ''],
+    ['07/12', 'WFC',  'Wells Fargo',            'BMO', 1.28,  ''],
+    ['07/12', 'C',    'Citigroup',              'BMO', 1.42,  ''],
+    ['07/15', 'GS',   'Goldman Sachs',          'BMO', 8.65,  ''],
+    ['07/16', 'BAC',  'Bank of America',        'BMO', 0.81,  ''],
+    ['07/17', 'JNJ',  'Johnson & Johnson',      'BMO', 2.71,  ''],
+    ['07/23', 'TSLA', 'Tesla Inc',              'AMC', 0.62,  ''],
+    ['07/23', 'GOOGL','Alphabet',               'AMC', 1.84,  ''],
+    ['07/30', 'MSFT', 'Microsoft',              'AMC', 2.91,  ''],
+    ['07/30', 'AMD',  'Adv Micro Devices',      'AMC', 0.68,  ''],
+    ['07/31', 'META', 'Meta Platforms',         'AMC', 4.71,  ''],
+    ['08/01', 'AAPL', 'Apple Inc',              'AMC', 1.34,  ''],
+    ['08/01', 'AMZN', 'Amazon.com',             'AMC', 1.02,  ''],
+    ['08/28', 'NVDA', 'NVIDIA Corp',            'AMC', 0.64,  'Whisper $0.71'],
+  ];
+
+  // Economic calendar
+  const ECON = [
+    ['06/25', '09:00', 'US',  'S&P Case-Shiller HPI YoY',   '7.2%',  '7.4%',  'MED'],
+    ['06/25', '10:00', 'US',  'Consumer Confidence',         '100.0', '102.0', 'HIGH'],
+    ['06/26', '10:00', 'US',  'New Home Sales',              '640K',  '634K',  'MED'],
+    ['06/27', '08:30', 'US',  'GDP Q1 Final',                '+1.4%', '+1.3%', 'HIGH'],
+    ['06/27', '08:30', 'US',  'Initial Jobless Claims',      '236K',  '238K',  'MED'],
+    ['06/27', '10:00', 'US',  'Pending Home Sales',          '+0.6%', '-7.7%', 'LOW'],
+    ['06/28', '08:30', 'US',  'PCE Deflator YoY',            '2.6%',  '2.7%',  'HIGH'],
+    ['06/28', '08:30', 'US',  'Core PCE MoM',                '0.1%',  '0.2%',  'HIGH'],
+    ['06/28', '09:45', 'US',  'Chicago PMI',                 '40.1',  '35.4',  'MED'],
+    ['06/28', '10:00', 'US',  'U-Mich Sentiment Final',      '65.8',  '69.1',  'MED'],
+    ['07/01', '10:00', 'US',  'ISM Manufacturing',           '49.2',  '48.7',  'HIGH'],
+    ['07/03', '08:30', 'US',  'ADP Employment',              '160K',  '152K',  'HIGH'],
+    ['07/05', '08:30', 'US',  'Nonfarm Payrolls',            '195K',  '272K',  'HIGH'],
+    ['07/05', '08:30', 'US',  'Unemployment Rate',           '4.0%',  '4.0%',  'HIGH'],
+    ['07/11', '08:30', 'US',  'CPI YoY',                     '3.1%',  '3.3%',  'HIGH'],
+    ['07/30', '14:00', 'US',  'FOMC Rate Decision',          '5.50%', '5.50%', 'HIGH'],
+  ];
+
+  // Trade ideas (quant ranked)
+  const TRADE_IDEAS = [
+    { side: 'LONG',  sym: 'NVDA', conf: 92, thesis: 'Momentum + earnings catalyst + flow', tp: 1050, sl: 880, rr: 2.4 },
+    { side: 'LONG',  sym: 'AVGO', conf: 88, thesis: 'AI accelerator share + VMware accretion',  tp: 1820, sl: 1480, rr: 2.0 },
+    { side: 'LONG',  sym: 'LLY',  conf: 86, thesis: 'GLP-1 capacity + Q3 script ramp',         tp: 860,  sl: 730, rr: 1.8 },
+    { side: 'SHORT', sym: 'TSLA', conf: 81, thesis: 'Demand pressure + robotaxi delay risk',   tp: 195,  sl: 264, rr: 1.7 },
+    { side: 'LONG',  sym: 'GS',   conf: 78, thesis: 'IB rebound + trading franchise leverage', tp: 545,  sl: 462, rr: 1.9 },
+    { side: 'SHORT', sym: 'KO',   conf: 74, thesis: 'Defensives rolling on yield reset',       tp: 58,   sl: 67,  rr: 1.6 },
+    { side: 'LONG',  sym: 'AMD',  conf: 72, thesis: 'MI325 traction; valuation compression',   tp: 195,  sl: 142, rr: 2.1 },
+    { side: 'SHORT', sym: 'BA',   conf: 70, thesis: 'Order weakness + ops headwinds',          tp: 162,  sl: 198, rr: 1.5 },
+    { side: 'LONG',  sym: 'META', conf: 69, thesis: 'Reels monetization + AI capex ROI',       tp: 560,  sl: 472, rr: 2.0 },
+    { side: 'SHORT', sym: 'XOM',  conf: 67, thesis: 'Crude topping + demand softening',        tp: 102,  sl: 124, rr: 1.4 },
+  ];
+
+  // Portfolio positions (mocked)
+  const PORTFOLIO = [
+    ['NVDA', 'LONG', 320, 642.18, 950.42],
+    ['MSFT', 'LONG', 180, 384.50, 432.07],
+    ['AVGO', 'LONG',  45, 1184.30, 1612.50],
+    ['LLY',  'LONG', 110, 612.42,  786.23],
+    ['META', 'LONG', 240, 398.20,  506.32],
+    ['GS',   'LONG',  90, 412.55,  494.07],
+    ['TSLA', 'SHORT',-150, 268.40, 238.84],
+    ['BA',   'SHORT', -80, 218.30, 185.34],
+    ['KO',   'SHORT',-440, 68.42,  63.71],
+    ['XOM',  'SHORT',-220, 124.08, 115.43],
+  ].map(([sym, side, qty, avg, last]) => {
+    const mv = qty * last;
+    const cost = qty * avg;
+    const pnl = (last - avg) * qty;
+    const pct = ((last - avg) / avg) * 100 * (qty < 0 ? -1 : 1);
+    return { sym, side, qty, avg, last, mv, pnl, pct };
+  });
+
+  // Correlation matrix between top tickers
+  function buildCorrelation(symbols) {
+    const m = {};
+    for (const s of symbols) {
+      m[s] = {};
+      for (const t of symbols) {
+        if (s === t) { m[s][t] = 1.0; continue; }
+        const rng = PRNG(hash(s + '|' + t));
+        // Same-sector correlations higher
+        const sectorMatch = BY_SYM[s].sector === BY_SYM[t].sector;
+        const base = sectorMatch ? 0.55 : 0.25;
+        m[s][t] = +(base + (rng() - 0.5) * 0.7).toFixed(2);
+      }
+    }
+    // Symmetrize
+    for (const s of symbols) for (const t of symbols) if (s < t) m[t][s] = m[s][t];
+    return m;
+  }
+
+  // Now timestamp utilities
+  function fmtMinsAgo(m) {
+    if (m < 60) return m + 'm';
+    if (m < 60*24) return Math.floor(m/60) + 'h';
+    return Math.floor(m/60/24) + 'd';
+  }
+
   window.MarketData = {
-    TICKERS, BY_SYM, INDICES, SECTORS, newsFor, insidersFor, optionsFlowFor, PRNG, hash,
+    TICKERS, BY_SYM, INDICES, SECTORS,
+    newsFor, insidersFor, optionsFlowFor,
+    EARNINGS, ECON, TRADE_IDEAS, PORTFOLIO,
+    buildCorrelation, fmtMinsAgo, PRNG, hash,
   };
 })();
