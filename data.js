@@ -87,7 +87,86 @@
     ['Materials',      2.3,  -0.84],
   ];
 
+  // Generate per-ticker rich profile
+  function tickerProfile(t) {
+    const rng = PRNG(hash(t[0]));
+    const [sym, name, sector, industry, price, mcap] = t;
+    const r1 = rng(), r2 = rng(), r3 = rng();
+    const pctChg = (rng() - 0.45) * 4.5; // daily %
+    const prevClose = price / (1 + pctChg / 100);
+    const dayHigh = price * (1 + rng() * 0.018);
+    const dayLow  = price * (1 - rng() * 0.018);
+    const yHigh   = price * (1 + 0.04 + rng() * 0.45);
+    const yLow    = price * (1 - 0.08 - rng() * 0.30);
+    const volume  = Math.round((5 + rng() * 80) * 1e6);
+    const avgVol  = Math.round(volume * (0.7 + rng() * 0.7));
+    const pe      = 8 + rng() * 60;
+    const fwdPe   = pe * (0.75 + rng() * 0.35);
+    const pb      = 1 + rng() * 18;
+    const peg     = 0.4 + rng() * 3.2;
+    const div     = rng() < 0.55 ? +(rng() * 4).toFixed(2) : 0;
+    const beta    = 0.4 + rng() * 1.7;
+    const shortPct = +(rng() * 14).toFixed(2);
+    const dtc     = +(0.4 + rng() * 5.4).toFixed(2);
+    const eps     = +(price / pe).toFixed(2);
+
+    // Factor scores 0..100
+    const factors = {
+      value:    Math.round(20 + rng() * 80),
+      momentum: Math.round(15 + rng() * 85),
+      quality:  Math.round(25 + rng() * 75),
+      lowVol:   Math.round(15 + rng() * 85),
+      growth:   Math.round(20 + rng() * 80),
+      size:     Math.round(40 + rng() * 60),
+    };
+
+    // Composite
+    const composite = Math.round(Object.values(factors).reduce((a,b)=>a+b,0) / 6);
+
+    // Generate 252-day OHLC history walking back from current price
+    const history = [];
+    let p = price;
+    const drift = (rng() - 0.5) * 0.0008;
+    const vol = 0.012 + rng() * 0.018;
+    for (let i = 0; i < 252; i++) {
+      const z = (rng() + rng() + rng() + rng() - 2) * 1.5; // approx normal
+      const ch = drift + z * vol;
+      const o = p;
+      p = Math.max(0.5, p * (1 - ch));
+      const c = p;
+      const h = Math.max(o, c) * (1 + rng() * 0.008);
+      const l = Math.min(o, c) * (1 - rng() * 0.008);
+      const v = Math.round((avgVol * (0.4 + rng() * 1.2)));
+      history.push({ o, h, l, c, v });
+    }
+    history.reverse(); // oldest first
+
+    // Now align: last close = current price
+    const scale = price / history[history.length - 1].c;
+    for (const b of history) { b.o *= scale; b.h *= scale; b.l *= scale; b.c *= scale; }
+
+    // Order book — 15 levels each side
+    const tick = price < 50 ? 0.01 : price < 500 ? 0.05 : 0.10;
+    const bids = [], asks = [];
+    for (let i = 0; i < 15; i++) {
+      const bp = +(price - tick * (i + 1) - rng() * tick).toFixed(2);
+      const ap = +(price + tick * (i + 1) + rng() * tick).toFixed(2);
+      bids.push({ p: bp, sz: Math.round(100 + rng() * 4900) * 100 });
+      asks.push({ p: ap, sz: Math.round(100 + rng() * 4900) * 100 });
+    }
+
+    return {
+      sym, name, sector, industry, price, prevClose, pctChg,
+      dayHigh, dayLow, yHigh, yLow, volume, avgVol, mcap,
+      pe, fwdPe, pb, peg, div, beta, shortPct, dtc, eps,
+      factors, composite, history, bids, asks,
+    };
+  }
+
+  const TICKERS = UNIVERSE.map(tickerProfile);
+  const BY_SYM = Object.fromEntries(TICKERS.map(t => [t.sym, t]));
+
   window.MarketData = {
-    INDICES, SECTORS, PRNG, hash,
+    TICKERS, BY_SYM, INDICES, SECTORS, PRNG, hash,
   };
 })();
