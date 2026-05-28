@@ -491,7 +491,316 @@ function DCViewport({ children, minScale = 0.1, maxScale = 8, style = {} }) {
 // ─────────────────────────────────────────────────────────────
 // DCSection — editable title + h-row of artboards in persisted order
 // ─────────────────────────────────────────────────────────────
+function DCSection({ id, title, subtitle, children, gap = 48 }) {
+  const ctx = React.useContext(DCCtx);
+  const sid = id ?? title;
+  const all = React.Children.toArray(dcFlatten(children));
+  const artboards = all.filter((c) => c && c.type === DCArtboard);
+  const rest = all.filter((c) => !(c && c.type === DCArtboard));
+  const sec = (ctx && sid && ctx.section(sid)) || {};
+  // Must match DesignCanvas's srcKey computation exactly (it filters falsy
+  // IDs), or onDelete persists a srcKey that DesignCanvas never recognizes.
+  const allIds = artboards.map((a) => a.props.id ?? a.props.label).filter(Boolean);
+  const srcKey = allIds.join('\x1f');
+  const hidden = sec.srcKey === srcKey ? (sec.hidden || []) : [];
+  const srcOrder = allIds.filter((k) => !hidden.includes(k));
+
+  const order = React.useMemo(() => {
+    const kept = (sec.order || []).filter((k) => srcOrder.includes(k));
+    return [...kept, ...srcOrder.filter((k) => !kept.includes(k))];
+  }, [sec.order, srcOrder.join('|')]);
+
+  const byId = Object.fromEntries(artboards.map((a) => [a.props.id ?? a.props.label, a]));
+
+  // marginBottom counter-scales so the on-screen gap between sections stays
+  // constant — otherwise at low zoom the (world-space) gap collapses while
+  // the screen-constant sectionhead below it doesn't, and the title reads as
+  // belonging to the section above. paddingBottom below is just enough for
+  // the 24px artboard-header (abs-positioned above each card) plus ~8px, so
+  // the title sits tight against its own row at every zoom.
+  return (
+    <div data-dc-section={sid}
+      style={{ marginBottom: 'calc(80px * var(--dc-inv-zoom, 1))', position: 'relative' }}>
+      <div style={{ padding: '0 60px' }}>
+        <div className="dc-sectionhead" style={{ paddingBottom: 36 }}>
+          <DCEditable tag="div" value={sec.title ?? title}
+            onChange={(v) => ctx && sid && ctx.patchSection(sid, { title: v })}
+            style={{ fontSize: 28, fontWeight: 600, color: DC.title, letterSpacing: -0.4, marginBottom: 6, display: 'inline-block' }} />
+          {subtitle && <div style={{ fontSize: 16, color: DC.subtitle }}>{subtitle}</div>}
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap, padding: '0 60px', alignItems: 'flex-start', width: 'max-content' }}>
+        {order.map((k) => (
+          <DCArtboardFrame key={k} sectionId={sid} artboard={byId[k]} order={order}
+            label={(sec.labels || {})[k] ?? byId[k].props.label}
+            onRename={(v) => ctx && ctx.patchSection(sid, (x) => ({ labels: { ...x.labels, [k]: v } }))}
+            onReorder={(next) => ctx && ctx.patchSection(sid, { order: next })}
+            onDelete={() => ctx && ctx.patchSection(sid, (x) => ({
+              hidden: [...(x.srcKey === srcKey ? (x.hidden || []) : []), k],
+              srcKey,
+            }))}
+            onFocus={() => ctx && ctx.setFocus(`${sid}/${k}`)} />
+        ))}
+      </div>
+      {rest}
+    </div>
+  );
+}
+
+// DCArtboard — marker; rendered by DCArtboardFrame via DCSection.
+function DCArtboard() { return null; }
+
+// Per-artboard export (kind: 'png' | 'html'). Both paths share the same
+// self-contained clone: computed styles baked in, @font-face / <img> /
+// inline-style background-image urls inlined as data URIs. PNG wraps the
+// clone in foreignObject→canvas at 3× the artboard's natural width×height
+// (same pipeline the host uses for page captures); HTML wraps it in a
+// minimal standalone document. Both are independent of viewport zoom.
+async function dcExport(node, w, h, name, kind) {
+  try { await document.fonts.ready; } catch {}
+  const toDataURL = (url) => fetch(url).then((r) => r.blob()).then((b) => new Promise((res) => {
+    const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => res(url); fr.readAsDataURL(b);
+  })).catch(() => url);
+
+  // Collect @font-face rules. ss.cssRules throws SecurityError on
+  // cross-origin sheets (e.g. fonts.googleapis.com) — in that case fetch
+  // the CSS text directly (those endpoints send ACAO:*) and regex-extract
+  // the blocks. @import and @media/@supports are walked so nested
+  // @font-face rules aren't missed.
+  const fontRules = [], pending = [], seen = new Set();
+  const scrapeCss = (href) => {
+    if (seen.has(href)) return; seen.add(href);
+    pending.push(fetch(href).then((r) => r.text()).then((css) => {
+      for (const m of css.match(/@font-face\s*{[^}]*}/g) || []) fontRules.push({ css: m, base: href });
+      for (const m of css.matchAll(/@import\s+(?:url\()?['"]?([^'")\s;]+)/g))
+        scrapeCss(new URL(m[1], href).href);
+    }).catch(() => {}));
+  };
+  const walk = (rules, base) => {
+    for (const r of rules) {
+      if (r.type === CSSRule.FONT_FACE_RULE) fontRules.push({ css: r.cssText, base });
+      else if (r.type === CSSRule.IMPORT_RULE && r.styleSheet) {
+        const ibase = r.styleSheet.href || base;
+        try { walk(r.styleSheet.cssRules, ibase); } catch { scrapeCss(ibase); }
+      } else if (r.cssRules) walk(r.cssRules, base);
+    }
+  };
+  for (const ss of document.styleSheets) {
+    const base = ss.href || location.href;
+    try { walk(ss.cssRules, base); } catch { if (ss.href) scrapeCss(ss.href); }
+  }
+  while (pending.length) await pending.shift();
+  const fontCss = (await Promise.all(fontRules.map(async (rule) => {
+    let out = rule.css, m; const re = /url\((['"]?)([^'")]+)\1\)/g;
+    while ((m = re.exec(rule.css))) {
+      if (m[2].indexOf('data:') === 0) continue;
+      let abs; try { abs = new URL(m[2], rule.base).href; } catch { continue; }
+      out = out.split(m[0]).join('url("' + await toDataURL(abs) + '")');
+    }
+    return out;
+  }))).join('\n');
+
+  const cloneStyled = (src) => {
+    if (src.nodeType === 8 || (src.nodeType === 1 && src.tagName === 'SCRIPT')) return document.createTextNode('');
+    const dst = src.cloneNode(false);
+    if (src.nodeType === 1) {
+      const cs = getComputedStyle(src); let txt = '';
+      for (let i = 0; i < cs.length; i++) txt += cs[i] + ':' + cs.getPropertyValue(cs[i]) + ';';
+      dst.setAttribute('style', txt + 'animation:none;transition:none;');
+      if (src.tagName === 'CANVAS') try { const im = document.createElement('img'); im.src = src.toDataURL(); im.setAttribute('style', txt); return im; } catch {}
+    }
+    for (let c = src.firstChild; c; c = c.nextSibling) dst.appendChild(cloneStyled(c));
+    return dst;
+  };
+  const clone = cloneStyled(node);
+  clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+  // Drop the card's own shadow/radius so the export is a flush w×h rect;
+  // the artboard's own background (if any) is already in the computed style.
+  clone.style.boxShadow = 'none'; clone.style.borderRadius = '0';
+
+  const jobs = [];
+  clone.querySelectorAll('img').forEach((el) => {
+    const s = el.getAttribute('src');
+    if (s && s.indexOf('data:') !== 0) jobs.push(toDataURL(el.src).then((d) => el.setAttribute('src', d)));
+  });
+  [clone, ...clone.querySelectorAll('*')].forEach((el) => {
+    const bg = el.style.backgroundImage; if (!bg) return;
+    let m; const re = /url\(["']?([^"')]+)["']?\)/g;
+    while ((m = re.exec(bg))) {
+      const tok = m[0], url = m[1];
+      if (url.indexOf('data:') === 0) continue;
+      jobs.push(toDataURL(url).then((d) => { el.style.backgroundImage = el.style.backgroundImage.split(tok).join('url("' + d + '")'); }));
+    }
+  });
+  await Promise.all(jobs);
+
+  const xml = new XMLSerializer().serializeToString(clone);
+  const save = (blob, ext) => {
+    if (!blob) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name + '.' + ext; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  if (kind === 'html') {
+    const html = '<!doctype html><html><head><meta charset="utf-8"><title>' + name + '</title>' +
+      (fontCss ? '<style>' + fontCss + '</style>' : '') +
+      '</head><body style="margin:0">' + xml + '</body></html>';
+    return save(new Blob([html], { type: 'text/html' }), 'html');
+  }
+
+  // PNG: the SVG's own width/height must be the output resolution — an
+  // <img>-loaded SVG rasterizes at its intrinsic size, so sizing it at 1×
+  // and ctx.scale()-ing up would just upscale a 1× bitmap. viewBox maps the
+  // w×h foreignObject onto the px·w × px·h SVG canvas so the browser renders
+  // the HTML at full resolution.
+  const px = 3;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w * px + '" height="' + h * px +
+    '" viewBox="0 0 ' + w + ' ' + h + '"><foreignObject width="' + w + '" height="' + h + '">' +
+    (fontCss ? '<style><![CDATA[' + fontCss + ']]></style>' : '') + xml + '</foreignObject></svg>';
+  const img = new Image();
+  await new Promise((res, rej) => {
+    img.onload = res; img.onerror = () => rej(new Error('svg load failed'));
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  });
+  const cv = document.createElement('canvas');
+  cv.width = w * px; cv.height = h * px;
+  cv.getContext('2d').drawImage(img, 0, 0);
+  cv.toBlob((blob) => save(blob, 'png'), 'image/png');
+}
+
+function DCArtboardFrame({ sectionId, artboard, label, order, onRename, onReorder, onFocus, onDelete }) {
+  const { id: rawId, label: rawLabel, width = 260, height = 480, children, style = {} } = artboard.props;
+  const id = rawId ?? rawLabel;
+  const ref = React.useRef(null);
+  const cardRef = React.useRef(null);
+  const menuRef = React.useRef(null);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [confirming, setConfirming] = React.useState(false);
+
+  // ⋯ menu: close on any outside pointerdown. Two-click delete lives inside
+  // the menu — first click arms the row, second commits; closing disarms.
+  React.useEffect(() => {
+    if (!menuOpen) { setConfirming(false); return; }
+    const off = (e) => { if (!menuRef.current || !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener('pointerdown', off, true);
+    return () => document.removeEventListener('pointerdown', off, true);
+  }, [menuOpen]);
+
+  const doExport = (kind) => {
+    setMenuOpen(false);
+    if (!cardRef.current) return;
+    const name = String(label || id || 'artboard').replace(/[^\w\s.-]+/g, '_');
+    dcExport(cardRef.current, width, height, name, kind)
+      .catch((e) => console.error('[design-canvas] export failed:', e));
+  };
+
+  // Live drag-reorder: dragged card sticks to cursor; siblings slide into
+  // their would-be slots in real time via transforms. DOM order only
+  // changes on drop.
+  const onGripDown = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const me = ref.current;
+    // translateX is applied in local (pre-scale) space but pointer deltas and
+    // getBoundingClientRect().left are screen-space — divide by the viewport's
+    // current scale so the dragged card tracks the cursor at any zoom level.
+    const scale = me.getBoundingClientRect().width / me.offsetWidth || 1;
+    const peers = Array.from(document.querySelectorAll(`[data-dc-section="${sectionId}"] [data-dc-slot]`));
+    const homes = peers.map((el) => ({ el, id: el.dataset.dcSlot, x: el.getBoundingClientRect().left }));
+    const slotXs = homes.map((h) => h.x);
+    const startIdx = order.indexOf(id);
+    const startX = e.clientX;
+    let liveOrder = order.slice();
+    me.classList.add('dc-dragging');
+
+    const layout = () => {
+      for (const h of homes) {
+        if (h.id === id) continue;
+        const slot = liveOrder.indexOf(h.id);
+        h.el.style.transform = `translateX(${(slotXs[slot] - h.x) / scale}px)`;
+      }
+    };
+
+    const move = (ev) => {
+      const dx = ev.clientX - startX;
+      me.style.transform = `translateX(${dx / scale}px)`;
+      const cur = homes[startIdx].x + dx;
+      let nearest = 0, best = Infinity;
+      for (let i = 0; i < slotXs.length; i++) {
+        const d = Math.abs(slotXs[i] - cur);
+        if (d < best) { best = d; nearest = i; }
+      }
+      if (liveOrder.indexOf(id) !== nearest) {
+        liveOrder = order.filter((k) => k !== id);
+        liveOrder.splice(nearest, 0, id);
+        layout();
+      }
+    };
+
+    const up = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      const finalSlot = liveOrder.indexOf(id);
+      me.classList.remove('dc-dragging');
+      me.style.transform = `translateX(${(slotXs[finalSlot] - homes[startIdx].x) / scale}px)`;
+      // After the settle transition, kill transitions + clear transforms +
+      // commit the reorder in the same frame so there's no visual snap-back.
+      setTimeout(() => {
+        for (const h of homes) { h.el.style.transition = 'none'; h.el.style.transform = ''; }
+        if (liveOrder.join('|') !== order.join('|')) onReorder(liveOrder);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          for (const h of homes) h.el.style.transition = '';
+        }));
+      }, 180);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+  };
+
+  return (
+    <div ref={ref} data-dc-slot={id} style={{ position: 'relative', flexShrink: 0 }}>
+      <div className="dc-header" data-omelette-chrome="" style={{ color: DC.label }} onPointerDown={(e) => e.stopPropagation()}>
+        <div className="dc-labelrow">
+          <div className="dc-grip" onPointerDown={onGripDown} title="Drag to reorder">
+            <svg width="9" height="13" viewBox="0 0 9 13" fill="currentColor"><circle cx="2" cy="2" r="1.1"/><circle cx="7" cy="2" r="1.1"/><circle cx="2" cy="6.5" r="1.1"/><circle cx="7" cy="6.5" r="1.1"/><circle cx="2" cy="11" r="1.1"/><circle cx="7" cy="11" r="1.1"/></svg>
+          </div>
+          <div className="dc-labeltext" onClick={onFocus} title="Click to focus">
+            <DCEditable value={label} onChange={onRename} onClick={(e) => e.stopPropagation()}
+              style={{ fontSize: 15, fontWeight: 500, color: DC.label, lineHeight: 1 }} />
+          </div>
+        </div>
+        <div className="dc-btns">
+          <div ref={menuRef} style={{ position: 'relative' }}>
+            <button className="dc-kebab" title="More" onClick={() => setMenuOpen((o) => !o)}>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><circle cx="2.5" cy="6" r="1.1"/><circle cx="6" cy="6" r="1.1"/><circle cx="9.5" cy="6" r="1.1"/></svg>
+            </button>
+            {menuOpen && (
+              <div className="dc-menu" onPointerDown={(e) => e.stopPropagation()}>
+                <button onClick={() => doExport('png')}>Download PNG</button>
+                <button onClick={() => doExport('html')}>Download HTML</button>
+                <hr />
+                <button className="dc-danger"
+                  onClick={() => { if (confirming) { setMenuOpen(false); onDelete(); } else setConfirming(true); }}>
+                  {confirming ? 'Click again to delete' : 'Delete'}
+                </button>
+              </div>
+            )}
+          </div>
+          <button className="dc-expand" onClick={onFocus} title="Focus">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M7 1h4v4M5 11H1V7M11 1L7.5 4.5M1 11l3.5-3.5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div ref={cardRef} className="dc-card"
+        style={{ borderRadius: 2, boxShadow: '0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06)', overflow: 'hidden', width, height, background: '#fff', ...style }}>
+        {children || <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: 13, fontFamily: DC.font }}>{id}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Inline rename — commits on blur or Enter.
 Object.assign(window, {
-  DesignCanvas,
+  DesignCanvas, DCSection, DCArtboard,
 });
 
