@@ -51,7 +51,270 @@
     );
   }
 
+  // ─── HeaderBar + IndexRibbon ─────────────────────────────────
+  function HeaderBar({ theme, ticker, onPickTicker, allTickers, markets = [], currentMarket = 'US', onPickMarket, marketMeta, alerts = [], now }) {
+    const [open, setOpen] = React.useState(false);
+    const [marketOpen, setMarketOpen] = React.useState(false);
+    const [alertsOpen, setAlertsOpen] = React.useState(false);
+    const [alertSeverity, setAlertSeverity] = React.useState('ALL');
+    const [dismissedAlerts, setDismissedAlerts] = React.useState(() => {
+      try { return new Set(JSON.parse(localStorage.getItem('phosphor.dismissedAlerts') || '[]')); }
+      catch (_) { return new Set(); }
+    });
+    const [q, setQ] = React.useState('');
+    const suffixByMarket = { INDIA: '.NS', JAPAN: '.T', UK: '.L', HONGKONG: '.HK', CANADA: '.TO', AUSTRALIA: '.AX' };
+    const query = q.trim().toUpperCase();
+    const suffix = suffixByMarket[currentMarket] || '';
+    const customSym = query && !query.includes('.') && suffix ? `${query}${suffix}` : query;
+    const matches = query ? allTickers.filter(t => t.sym.includes(query) || t.name.toUpperCase().includes(query)) : allTickers;
+    const renderLimit = query ? 250 : 500;
+    const list = matches.slice(0, renderLimit);
+    const showCustom = query && customSym.length <= 18 && !allTickers.some(t => t.sym === customSym);
+    const activeMarket = markets.find(m => m.id === currentMarket) || marketMeta || { id: currentMarket, name: currentMarket, currency: '' };
+    const marketClock = (() => {
+      const meta = {
+        US: ['NYSE', 'America/New_York', 'ET', 9, 30, 16, 0],
+        INDIA: ['NSE', 'Asia/Kolkata', 'IST', 9, 15, 15, 30],
+        JAPAN: ['JPX', 'Asia/Tokyo', 'JST', 9, 0, 15, 30],
+        UK: ['LSE', 'Europe/London', 'UK', 8, 0, 16, 30],
+        EUROPE: ['XETRA', 'Europe/Berlin', 'CET', 9, 0, 17, 30],
+        HONGKONG: ['HKEX', 'Asia/Hong_Kong', 'HKT', 9, 30, 16, 0],
+        CANADA: ['TSX', 'America/Toronto', 'ET', 9, 30, 16, 0],
+        AUSTRALIA: ['ASX', 'Australia/Sydney', 'AET', 10, 0, 16, 0],
+      }[currentMarket] || ['MKT', 'UTC', 'UTC', 0, 0, 23, 59];
+      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+        timeZone: meta[1], weekday: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+      }).formatToParts(now).filter(p => p.type !== 'literal').map(p => [p.type, p.value]));
+      const mins = Number(parts.hour) * 60 + Number(parts.minute);
+      const openMins = meta[3] * 60 + meta[4];
+      const closeMins = meta[5] * 60 + meta[6];
+      const isOpen = !['Sat', 'Sun'].includes(parts.weekday) && mins >= openMins && mins < closeMins;
+      return { venue: meta[0], zone: meta[2], time: `${parts.hour}:${parts.minute}:${parts.second}`, isOpen };
+    })();
+    const alertKey = (alert, index) => `${alert.symbol || 'MKT'}:${alert.createdAt || index}:${alert.message || ''}`;
+    const activeAlerts = (alerts || []).filter((alert, index) => !dismissedAlerts.has(alertKey(alert, index)));
+    const visibleAlerts = activeAlerts.filter(alert => alertSeverity === 'ALL' || String(alert.severity || 'INFO').toUpperCase() === alertSeverity);
+    const dismissAlert = (key) => {
+      setDismissedAlerts(prev => {
+        const next = new Set(prev);
+        next.add(key);
+        localStorage.setItem('phosphor.dismissedAlerts', JSON.stringify([...next]));
+        return next;
+      });
+    };
+    return (
+      <div style={{
+        height: 36, background: theme.bg2,
+        borderBottom: `1px solid ${theme.border}`,
+        display: 'flex', alignItems: 'stretch', fontFamily: theme.fontMono, fontSize: 11,
+        color: theme.text, position: 'relative', zIndex: 20,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', padding: '0 12px', borderRight: `1px solid ${theme.border}`, gap: 8 }}>
+          <div style={{
+            width: 14, height: 14, background: theme.accent,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            color: theme.bg, fontWeight: 900, fontSize: 10,
+          }}>{theme.name[0]}</div>
+          <span style={{ color: theme.textBright, fontWeight: 700, letterSpacing: '0.12em' }}>{theme.name}</span>
+          <span style={{ color: theme.dim, fontSize: 9 }}>{theme.tagline}</span>
+        </div>
+
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '0 10px', borderRight: `1px solid ${theme.border}`, gap: 8, minWidth: 220 }}>
+          <span style={{ color: theme.dim, fontSize: 9 }}>MKT</span>
+          <button onClick={() => setMarketOpen(o => !o)} style={{
+            background: theme.panelHi, border: `1px solid ${theme.border}`,
+            color: theme.textBright, fontFamily: theme.fontMono, fontSize: 12, fontWeight: 700,
+            padding: '2px 10px', cursor: 'pointer', letterSpacing: '0.04em',
+          }}>{activeMarket.id || currentMarket} ▾</button>
+          <span style={{ color: theme.dim, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 92 }}>{activeMarket.name}</span>
+          {marketOpen && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 46, width: 300,
+              background: theme.panel, border: `1px solid ${theme.borderHi}`,
+              boxShadow: `0 8px 24px rgba(0,0,0,0.5)`, padding: 4, zIndex: 35,
+            }}>
+              {(markets || []).map(m => (
+                <button key={m.id} onClick={() => { if (onPickMarket) onPickMarket(m.id); setMarketOpen(false); setOpen(false); }}
+                  style={{
+                    display: 'grid', gridTemplateColumns: '76px 1fr 54px', gap: 6, alignItems: 'center',
+                    width: '100%', padding: '3px 6px',
+                    background: m.id === currentMarket ? theme.panelHi : 'transparent',
+                    border: 'none', borderBottom: `1px solid ${theme.border}`,
+                    color: theme.text, fontFamily: theme.fontMono, fontSize: 10, textAlign: 'left', cursor: 'pointer',
+                  }}>
+                  <span style={{ color: theme.accent, fontWeight: 800 }}>{m.id}</span>
+                  <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
+                  <span style={{ color: theme.dim, textAlign: 'right' }}>{m.currency}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '0 10px', borderRight: `1px solid ${theme.border}`, gap: 8, minWidth: 280 }}>
+          <span style={{ color: theme.dim, fontSize: 9 }}>SYM</span>
+          <button onClick={() => setOpen(o => !o)} style={{
+            background: theme.panelHi, border: `1px solid ${theme.border}`,
+            color: theme.textBright, fontFamily: theme.fontMono, fontSize: 13, fontWeight: 700,
+            padding: '2px 10px', cursor: 'pointer', letterSpacing: '0.04em',
+          }}>{ticker.sym} ▾</button>
+          <span style={{ color: theme.dim, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{ticker.name}</span>
+          {open && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 60, width: 320,
+              background: theme.panel, border: `1px solid ${theme.borderHi}`,
+              boxShadow: `0 8px 24px rgba(0,0,0,0.5)`, padding: 4, zIndex: 30,
+            }}>
+              <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="search sym/name..."
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && customSym) {
+                    onPickTicker(customSym);
+                    setOpen(false);
+                    setQ('');
+                  }
+                }}
+                style={{
+                  background: theme.bg, border: `1px solid ${theme.border}`,
+                  color: theme.text, fontFamily: theme.fontMono, fontSize: 11,
+                  width: '100%', padding: '4px 6px', outline: 'none', marginBottom: 4,
+                }} />
+              <div style={{ maxHeight: 360, overflow: 'auto' }}>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', gap: 8,
+                  padding: '2px 6px 5px', color: theme.dim, fontSize: 9,
+                  borderBottom: `1px solid ${theme.border}`,
+                }}>
+                  <span>{matches.length.toLocaleString('en-US')} MATCHES</span>
+                  <span>{list.length < matches.length ? `SHOWING ${list.length.toLocaleString('en-US')}` : 'FULL LIST'}</span>
+                </div>
+                {showCustom && (
+                  <button onClick={() => { onPickTicker(customSym); setOpen(false); setQ(''); }}
+                    style={{
+                      display: 'grid', gridTemplateColumns: '60px 1fr 70px 60px',
+                      gap: 6, alignItems: 'center', width: '100%', padding: '3px 6px',
+                      background: theme.panelHi,
+                      border: 'none', borderBottom: `1px solid ${theme.border}`,
+                      color: theme.text, fontFamily: theme.fontMono, fontSize: 10,
+                      textAlign: 'left', cursor: 'pointer',
+                    }}>
+                    <span style={{ color: theme.warn, fontWeight: 700 }}>{customSym}</span>
+                    <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Use typed Yahoo symbol</span>
+                    <span style={{ color: theme.dim, textAlign: 'right' }}>--</span>
+                    <span style={{ color: theme.dim, textAlign: 'right' }}>LIVE</span>
+                  </button>
+                )}
+                {list.map(t => (
+                  <button key={t.sym} onClick={() => { onPickTicker(t.sym); setOpen(false); setQ(''); }}
+                    style={{
+                      display: 'grid', gridTemplateColumns: '60px 1fr 70px 60px',
+                      gap: 6, alignItems: 'center', width: '100%', padding: '3px 6px',
+                      background: t.sym === ticker.sym ? theme.panelHi : 'transparent',
+                      border: 'none', borderBottom: `1px solid ${theme.border}`,
+                      color: theme.text, fontFamily: theme.fontMono, fontSize: 10,
+                      textAlign: 'left', cursor: 'pointer',
+                    }}>
+                    <span style={{ color: theme.accent, fontWeight: 700 }}>{t.sym}</span>
+                    <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                    <span style={{ color: theme.dim, textAlign: 'right' }}>{fmt.money(t.price)}</span>
+                    <span style={{ color: t.pctChg >= 0 ? theme.up : theme.down, textAlign: 'right' }}>{fmt.pct(t.pctChg)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', alignItems: 'center', padding: '0 10px', gap: 14, color: theme.dim, fontSize: 10 }}>
+          <span><span style={{ color: theme.dim }}>SESSION </span><span style={{ color: marketClock.isOpen ? theme.up : theme.warn, fontWeight: 700 }}>{marketClock.isOpen ? '● OPEN' : '● CLOSED'}</span></span>
+          <span><span style={{ color: theme.dim }}>{marketClock.venue} </span><span style={{ color: theme.text }}>{marketClock.time} {marketClock.zone}</span></span>
+          <span><span style={{ color: theme.dim }}>TAPE </span><span style={{ color: theme.text }}>A · NMS</span></span>
+          <span><span style={{ color: theme.dim }}>ADV/DEC </span><span style={{ color: theme.up }}>1828</span>/<span style={{ color: theme.down }}>1142</span></span>
+          <span><span style={{ color: theme.dim }}>NEW HI/LO </span><span style={{ color: theme.up }}>84</span>/<span style={{ color: theme.down }}>22</span></span>
+          <span><span style={{ color: theme.dim }}>BREADTH </span><span style={{ color: theme.up }}>+1.62</span></span>
+        </div>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '0 12px', borderLeft: `1px solid ${theme.border}`, gap: 12 }}>
+          <span style={{ color: theme.dim }}>USER</span><span style={{ color: theme.text }}>quant@local</span>
+          <button onClick={() => setAlertsOpen(o => !o)} style={{
+            background: alertsOpen ? theme.panelHi : 'transparent',
+            border: `1px solid ${alertsOpen ? theme.borderHi : 'transparent'}`,
+            color: activeAlerts.length ? theme.warn : theme.dim,
+            fontFamily: theme.fontMono, fontSize: 10, fontWeight: 800,
+            cursor: 'pointer', padding: '3px 6px',
+          }}>● {visibleAlerts.length} ALERTS</button>
+          {alertsOpen && (
+            <div style={{
+              position: 'absolute', top: '100%', right: 6, width: 360, maxHeight: 300,
+              overflow: 'auto', background: theme.panel, border: `1px solid ${theme.borderHi}`,
+              boxShadow: '0 10px 28px rgba(0,0,0,0.55)', padding: 6, zIndex: 40,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: theme.dim, fontSize: 9, borderBottom: `1px solid ${theme.border}`, paddingBottom: 4, marginBottom: 4 }}>
+                <span>NOTIFICATIONS</span><span>{activeAlerts.length} ACTIVE</span>
+              </div>
+              <div style={{ display: 'flex', gap: 3, marginBottom: 5 }}>
+                {['ALL', 'WARN', 'INFO'].map(level => (
+                  <button key={level} onClick={() => setAlertSeverity(level)} style={{
+                    background: alertSeverity === level ? theme.accent : theme.bg2,
+                    color: alertSeverity === level ? theme.bg : theme.dim,
+                    border: `1px solid ${alertSeverity === level ? theme.accent : theme.border}`,
+                    fontFamily: theme.fontMono, fontSize: 9, fontWeight: 800,
+                    cursor: 'pointer', padding: '2px 7px',
+                  }}>{level}</button>
+                ))}
+              </div>
+              {!visibleAlerts.length && <div style={{ color: theme.dim, padding: '8px 4px', fontSize: 10 }}>No active alerts.</div>}
+              {visibleAlerts.map((alert, index) => {
+                const key = alertKey(alert, index);
+                return (
+                  <div key={key} style={{
+                    display: 'grid', gridTemplateColumns: '46px 1fr 18px', gap: 6,
+                    padding: '5px 2px', borderBottom: `1px dotted ${theme.border}`, alignItems: 'start',
+                  }}>
+                    <span style={{ color: theme.warn, fontWeight: 800 }}>{alert.symbol || 'MKT'}</span>
+                    <span style={{ color: theme.text, lineHeight: 1.25 }}>{alert.message || alert.severity || 'Alert'}</span>
+                    <button onClick={() => dismissAlert(key)} aria-label="Dismiss alert" style={{
+                      background: theme.bg2, border: `1px solid ${theme.border}`,
+                      color: theme.dim, cursor: 'pointer', width: 16, height: 16, lineHeight: '12px',
+                      padding: 0, fontFamily: theme.fontMono, fontSize: 10,
+                    }}>x</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function IndexRibbon({ theme, indices }) {
+    return (
+      <div style={{
+        height: 26, background: theme.bg, borderBottom: `1px solid ${theme.border}`,
+        display: 'flex', alignItems: 'stretch', overflow: 'hidden',
+        fontFamily: theme.fontMono, fontSize: 11,
+      }}>
+        {indices.map((idx, i) => {
+          const [sym, name, val, ch] = idx;
+          const isPct = sym !== 'US10Y';
+          return (
+            <div key={sym} style={{
+              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '0 10px', borderRight: i < indices.length - 1 ? `1px solid ${theme.border}` : 'none',
+              minWidth: 0, gap: 6,
+            }}>
+              <span style={{ color: theme.dim, fontWeight: 700, letterSpacing: '0.06em' }}>{sym}</span>
+              <span style={{ color: theme.text, fontVariantNumeric: 'tabular-nums' }}>{typeof val === 'number' ? val.toLocaleString('en-US') : val}</span>
+              <span style={{ color: ch >= 0 ? theme.up : theme.down, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                {ch >= 0 ? '▲' : '▼'}{Math.abs(ch).toFixed(isPct ? 2 : 3)}{isPct ? '%' : ''}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   Object.assign(window, {
-    Panel,
+    Panel, HeaderBar, IndexRibbon,
   });
 })();
