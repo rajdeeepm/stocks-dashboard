@@ -314,7 +314,120 @@
     );
   }
 
+  // ─── Quote header (above chart) ─────────────────────────────
+  function QuoteHeader({ theme, t }) {
+    const upDay = t.pctChg >= 0;
+    return (
+      <div style={{
+        padding: '6px 10px',
+        borderBottom: `1px solid ${theme.border}`,
+        background: theme.bg2,
+        fontFamily: theme.fontMono, fontSize: 11,
+        display: 'grid',
+        gridTemplateColumns: 'auto auto 1fr',
+        gap: 16, alignItems: 'center',
+      }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: theme.textBright, lineHeight: 1, letterSpacing: '0.02em' }}>{t.sym}</div>
+          <div style={{ color: theme.dim, fontSize: 9, marginTop: 2, letterSpacing: '0.05em' }}>{t.name.toUpperCase()} · {t.sector.toUpperCase()}</div>
+        </div>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontSize: 26, fontWeight: 800, color: theme.textBright, letterSpacing: '0.01em', fontVariantNumeric: 'tabular-nums' }}>{fmt.money(t.price)}</span>
+            <span style={{ color: upDay ? theme.up : theme.down, fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+              {fmt.sign(t.price - t.prevClose)} ({fmt.pct(t.pctChg)})
+            </span>
+          </div>
+          <div style={{ color: theme.dim, fontSize: 9, marginTop: 2 }}>
+            REG · LAST {fmt.money(t.price)} · BID {fmt.money(t.bids[0].p)} × {(t.bids[0].sz/100)|0} · ASK {fmt.money(t.asks[0].p)} × {(t.asks[0].sz/100)|0}
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4, fontSize: 10 }}>
+          {[
+            ['OPEN',   fmt.money(t.prevClose * (1 + (t.pctChg/100)*0.2))],
+            ['HIGH',   fmt.money(t.dayHigh)],
+            ['LOW',    fmt.money(t.dayLow)],
+            ['VOL',    fmt.big(t.volume)],
+            ['AVG',    fmt.big(t.avgVol)],
+            ['52W H',  fmt.money(t.yHigh)],
+            ['52W L',  fmt.money(t.yLow)],
+            ['MCAP',   '$' + fmt.big(t.mcap)],
+            ['P/E',    t.pe.toFixed(1)],
+            ['FWD P/E',t.fwdPe.toFixed(1)],
+            ['β',      t.beta.toFixed(2)],
+            ['DIV',    t.div ? t.div.toFixed(2) + '%' : '—'],
+          ].map(([k, v]) => (
+            <div key={k} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px dotted ${theme.border}`, padding: '1px 0' }}>
+              <span style={{ color: theme.dim }}>{k}</span><span style={{ color: theme.text, fontWeight: 600 }}>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Factor scores ───────────────────────────────────────────
+  function FactorScores({ theme, t }) {
+    const factors = [
+      ['VAL', t.factors.value],
+      ['MOM', t.factors.momentum],
+      ['QLT', t.factors.quality],
+      ['LVL', t.factors.lowVol],
+      ['GRW', t.factors.growth],
+      ['SIZ', t.factors.size],
+    ];
+    const cx = 64, cy = 64, R = 42;
+    const pts = factors.map((f, i) => {
+      const a = -Math.PI/2 + (i / factors.length) * Math.PI * 2;
+      const r = (f[1] / 100) * R;
+      return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+    });
+    const labelPts = factors.map((f, i) => {
+      const a = -Math.PI/2 + (i / factors.length) * Math.PI * 2;
+      return [cx + (R + 14) * Math.cos(a), cy + (R + 14) * Math.sin(a)];
+    });
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '128px minmax(0, 1fr)', gap: 8, fontSize: 10, height: '100%' }}>
+        <svg viewBox="0 0 128 128" style={{ width: 128, height: 128, maxWidth: '100%' }}>
+          {[0.25, 0.5, 0.75, 1].map((r, i) => (
+            <polygon key={i} points={factors.map((_, k) => {
+              const a = -Math.PI/2 + (k / factors.length) * Math.PI * 2;
+              return (cx + R * r * Math.cos(a)) + ',' + (cy + R * r * Math.sin(a));
+            }).join(' ')} fill="none" stroke={i === 3 ? theme.dim : theme.borderHi} strokeOpacity={i === 3 ? 0.9 : 0.72} strokeWidth={i === 3 ? 1.1 : 0.8} />
+          ))}
+          {factors.map((_, i) => {
+            const a = -Math.PI/2 + (i / factors.length) * Math.PI * 2;
+            return <line key={i} x1={cx} y1={cy} x2={cx + R * Math.cos(a)} y2={cy + R * Math.sin(a)} stroke={theme.dim} strokeOpacity={0.82} strokeWidth={0.9} />;
+          })}
+          <polygon points={pts.map(p => p.join(',')).join(' ')} fill={theme.accent} fillOpacity={0.18} stroke={theme.accent} strokeWidth={1.2} />
+          {pts.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={1.6} fill={theme.accent} />)}
+          {labelPts.map((p, i) => (
+            <text key={i} x={p[0]} y={p[1]+3} fill={theme.textBright} stroke={theme.bg} strokeWidth={2.4} paintOrder="stroke" fontFamily={theme.fontMono} fontSize={9} fontWeight={700} textAnchor="middle">{factors[i][0]}</text>
+          ))}
+        </svg>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontFamily: theme.fontMono }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px solid ${theme.border}`, paddingBottom: 2, marginBottom: 2 }}>
+            <span style={{ color: theme.dim }}>COMPOSITE</span>
+            <span style={{ color: theme.accent, fontWeight: 800, fontSize: 14 }}>{t.composite}</span>
+          </div>
+          {factors.map(([k, v]) => (
+            <div key={k} style={{ display: 'grid', gridTemplateColumns: '30px 1fr 24px', gap: 4, alignItems: 'center', fontSize: 9 }}>
+              <span style={{ color: theme.dim }}>{k}</span>
+              <div style={{ height: 6, background: theme.bg2, position: 'relative', border: `1px solid ${theme.border}` }}>
+                <div style={{ position: 'absolute', inset: 0, width: v + '%', background: v >= 70 ? theme.up : v >= 40 ? theme.warn : theme.down, opacity: 0.85 }} />
+              </div>
+              <span style={{ color: theme.text, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+            </div>
+          ))}
+          <div style={{ marginTop: 2, color: theme.dim, fontSize: 8, lineHeight: 1.3 }}>
+            DECILE RANK · UNIVERSE: {(window.MarketData.MARKET_META && window.MarketData.MARKET_META.id) || 'SP500'}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   Object.assign(window, {
-    Panel, HeaderBar, IndexRibbon,
+    Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores,
   });
 })();
