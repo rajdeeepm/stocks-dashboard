@@ -427,7 +427,84 @@
     );
   }
 
+  // ─── Order book L2 ───────────────────────────────────────────
+  function OrderBook({ theme, t }) {
+    const maxSize = Math.max(...t.bids.map(b => b.sz), ...t.asks.map(a => a.sz));
+    const Row = ({ side, p, sz, isTop }) => {
+      const pct = (sz / maxSize) * 100;
+      const sideColor = side === 'B' ? theme.up : theme.down;
+      return (
+        <div style={{
+          position: 'relative', display: 'grid',
+          gridTemplateColumns: '1fr 1fr 1fr', fontSize: 10, padding: '1px 6px',
+          fontFamily: theme.fontMono, borderBottom: `1px solid ${theme.border}`,
+          background: isTop ? theme.panelHi : 'transparent',
+        }}>
+          <div style={{ position: 'absolute', top: 0, bottom: 0, [side === 'B' ? 'right' : 'left']: 0, width: pct + '%', background: sideColor, opacity: 0.15 }} />
+          <span style={{ color: sideColor, fontWeight: 700, position: 'relative', zIndex: 1 }}>{side}</span>
+          <span style={{ color: theme.text, textAlign: 'right', fontVariantNumeric: 'tabular-nums', position: 'relative', zIndex: 1 }}>{p.toFixed(2)}</span>
+          <span style={{ color: theme.dim, textAlign: 'right', fontVariantNumeric: 'tabular-nums', position: 'relative', zIndex: 1 }}>{(sz/100)|0}</span>
+        </div>
+      );
+    };
+    const spread = t.asks[0].p - t.bids[0].p;
+    const midPrice = (t.asks[0].p + t.bids[0].p) / 2;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontSize: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', padding: '0 6px 2px', color: theme.dim, fontSize: 8, letterSpacing: '0.05em' }}>
+          <span>SIDE</span><span style={{ textAlign: 'right' }}>PRICE</span><span style={{ textAlign: 'right' }}>SZ(×100)</span>
+        </div>
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column-reverse', overflow: 'hidden' }}>
+            {t.asks.slice(0, 9).map((a, i) => <Row key={'a'+i} side="A" p={a.p} sz={a.sz} isTop={i===0} />)}
+          </div>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', padding: '3px 6px',
+            background: theme.bg2, borderTop: `1px solid ${theme.borderHi}`, borderBottom: `1px solid ${theme.borderHi}`,
+            color: theme.accent, fontWeight: 700, fontSize: 10,
+          }}>
+            <span>MID {midPrice.toFixed(2)}</span>
+            <span style={{ color: theme.dim }}>SPRD {spread.toFixed(2)}</span>
+          </div>
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            {t.bids.slice(0, 9).map((b, i) => <Row key={'b'+i} side="B" p={b.p} sz={b.sz} isTop={i===0} />)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Options flow ────────────────────────────────────────────
+  function OptionsFlow({ theme, flow }) {
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '24px 36px 38px 44px 50px 36px 36px',
+          gap: 4, padding: '0 4px 2px', color: theme.dim, fontSize: 8, letterSpacing: '0.05em',
+          borderBottom: `1px solid ${theme.border}`, position: 'sticky', top: 0, background: theme.panel,
+        }}>
+          <span>T</span><span>STK</span><span>EXP</span><span style={{ textAlign: 'right' }}>VOL</span><span style={{ textAlign: 'right' }}>V/OI</span><span style={{ textAlign: 'right' }}>PRM</span><span>SIDE</span>
+        </div>
+        {flow.map((o, i) => (
+          <div key={i} style={{
+            display: 'grid', gridTemplateColumns: '24px 36px 38px 44px 50px 36px 36px',
+            gap: 4, padding: '1px 4px', borderBottom: `1px dotted ${theme.border}`,
+            fontSize: 10, fontVariantNumeric: 'tabular-nums',
+          }}>
+            <span style={{ color: o.type === 'C' ? theme.up : theme.down, fontWeight: 700 }}>{o.type}</span>
+            <span style={{ color: theme.text }}>{o.strike}</span>
+            <span style={{ color: theme.dim }}>{o.exp}</span>
+            <span style={{ color: theme.text, textAlign: 'right' }}>{fmt.num(o.vol)}</span>
+            <span style={{ color: o.ratio > 5 ? theme.warn : theme.text, textAlign: 'right', fontWeight: o.ratio > 5 ? 700 : 400 }}>{o.ratio}x</span>
+            <span style={{ color: theme.dim, textAlign: 'right' }}>{o.prem.toFixed(2)}</span>
+            <span style={{ color: o.side === 'ASK' ? theme.up : theme.down }}>{o.side}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   Object.assign(window, {
-    Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores,
+    Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores, OrderBook, OptionsFlow,
   });
 })();
