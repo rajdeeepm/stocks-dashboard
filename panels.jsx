@@ -504,7 +504,189 @@
     );
   }
 
+  // ─── News feed ───────────────────────────────────────────────
+  function NewsFeed({ theme, news, ticker }) {
+    const [tab, setTab] = React.useState('SYM');
+    const topicFeed = window.MarketData.newsForTopic
+      ? window.MarketData.newsForTopic(ticker.sym, tab)
+      : (tab === 'SYM' ? news : news.slice(news.length - 8));
+    const items = (topicFeed && topicFeed.length ? topicFeed : news).slice(0, 18);
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontFamily: theme.fontMono }}>
+        <div style={{ display: 'flex', gap: 2, marginBottom: 4 }}>
+          {['SYM', 'MKT', 'EARN', 'M&A'].map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{
+              padding: '1px 8px', fontSize: 9, letterSpacing: '0.06em',
+              background: tab === t ? theme.accent : theme.panelHi,
+              color: tab === t ? theme.bg : theme.dim,
+              border: `1px solid ${tab === t ? theme.accent : theme.border}`,
+              cursor: 'pointer', fontFamily: theme.fontMono, fontWeight: 700,
+            }}>{t}</button>
+          ))}
+          <div style={{ flex: 1 }} />
+          <span style={{ color: theme.dim, fontSize: 9 }}>VIA GOOGLE NEWS</span>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {items.map((n, i) => (
+            <div key={i} style={{
+              padding: '3px 0', borderBottom: `1px dotted ${theme.border}`,
+              display: 'grid', gridTemplateColumns: '32px 1fr 38px', gap: 6,
+              alignItems: 'start', fontSize: 10,
+            }}>
+              <span style={{ color: theme.dim, fontSize: 9, paddingTop: 1 }}>{window.MarketData.fmtMinsAgo(n.minsAgo)}</span>
+              <div style={{ minWidth: 0 }}>
+                <a
+                  href={n.link || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onDoubleClick={(event) => {
+                    if (!n.link) return;
+                    event.preventDefault();
+                    window.open(n.link, '_blank', 'noopener,noreferrer');
+                  }}
+                  style={{
+                    color: theme.text,
+                    lineHeight: 1.25,
+                    fontWeight: 500,
+                    textDecoration: 'none',
+                    display: 'block',
+                  }}
+                >{n.head}</a>
+                <div style={{ color: theme.dim, fontSize: 8, marginTop: 1 }}>{n.src.toUpperCase()}</div>
+              </div>
+              <span style={{ color: i < 3 ? theme.warn : theme.dim, fontSize: 8, textAlign: 'right', fontWeight: i < 3 ? 700 : 400 }}>
+                {i < 3 ? '● HOT' : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Insider Transactions ────────────────────────────────────
+  function InsiderTx({ theme, list }) {
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 48px 36px 56px 56px 38px',
+          gap: 4, padding: '0 4px 2px', color: theme.dim, fontSize: 8, letterSpacing: '0.05em',
+          borderBottom: `1px solid ${theme.border}`,
+        }}>
+          <span>INSIDER</span><span>ROLE</span><span>ACT</span><span style={{ textAlign: 'right' }}>SHARES</span><span style={{ textAlign: 'right' }}>PRICE</span><span>DATE</span>
+        </div>
+        {list.map((row, i) => {
+          const [name, role, act, sh, pr, dt] = row;
+          return (
+            <div key={i} style={{
+              display: 'grid', gridTemplateColumns: '1fr 48px 36px 56px 56px 38px',
+              gap: 4, padding: '1px 4px', borderBottom: `1px dotted ${theme.border}`,
+              fontSize: 10, fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+              <span style={{ color: theme.dim, fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{role}</span>
+              <span style={{ color: act === 'BUY' ? theme.up : theme.down, fontWeight: 700 }}>{act}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{fmt.num(sh)}</span>
+              <span style={{ color: theme.dim, textAlign: 'right' }}>{pr.toFixed(2)}</span>
+              <span style={{ color: theme.dim, fontSize: 9 }}>{dt}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ─── Short Interest ─────────────────────────────────────────
+  function ShortInterest({ theme, t }) {
+    const gauge = (val, max, color) => (
+      <div style={{ height: 5, background: theme.bg2, border: `1px solid ${theme.border}`, position: 'relative' }}>
+        <div style={{ position: 'absolute', inset: 0, width: Math.min(100, (val/max)*100) + '%', background: color, opacity: 0.8 }} />
+      </div>
+    );
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+            <span style={{ color: theme.dim }}>SHORT INT %</span>
+            <span style={{ color: t.shortPct > 7 ? theme.down : theme.text, fontWeight: 700 }}>{t.shortPct}%</span>
+          </div>
+          {gauge(t.shortPct, 15, t.shortPct > 7 ? theme.down : theme.warn)}
+        </div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+            <span style={{ color: theme.dim }}>DAYS TO COVER</span>
+            <span style={{ color: t.dtc > 3 ? theme.down : theme.text, fontWeight: 700 }}>{t.dtc}d</span>
+          </div>
+          {gauge(t.dtc, 6, t.dtc > 3 ? theme.down : theme.warn)}
+        </div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+            <span style={{ color: theme.dim }}>UTILIZATION</span>
+            <span style={{ color: theme.text, fontWeight: 700 }}>{Math.min(99, (t.shortPct * 8) | 0)}%</span>
+          </div>
+          {gauge(t.shortPct * 8, 100, theme.accent)}
+        </div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+            <span style={{ color: theme.dim }}>BORROW FEE</span>
+            <span style={{ color: theme.text, fontWeight: 700 }}>{(t.shortPct * 0.18 + 0.25).toFixed(2)}%</span>
+          </div>
+          {gauge(t.shortPct * 0.18 + 0.25, 4, theme.warn)}
+        </div>
+        <div style={{ marginTop: 4, padding: '4px 6px', background: theme.bg2, border: `1px solid ${theme.border}`, fontSize: 9 }}>
+          <div style={{ color: theme.dim, marginBottom: 1 }}>SQUEEZE RISK</div>
+          <div style={{ color: t.shortPct * t.dtc > 30 ? theme.warn : theme.text, fontWeight: 700, fontSize: 11 }}>
+            {t.shortPct * t.dtc > 30 ? 'ELEVATED' : t.shortPct * t.dtc > 15 ? 'MODERATE' : 'LOW'}
+          </div>
+          <div style={{ color: theme.dim, marginTop: 2, fontSize: 8 }}>SI × DTC = {(t.shortPct * t.dtc).toFixed(1)}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Sector Heatmap ──────────────────────────────────────────
+  function SectorHeatmap({ theme, sectors }) {
+    return (
+      <div style={{
+        display: 'grid', gap: 3,
+        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+        gridTemplateRows: 'repeat(3, minmax(0, 1fr))',
+        height: '100%', fontFamily: theme.fontMono, overflow: 'hidden',
+      }}>
+        {sectors.map(([name, weight, perf], i) => {
+          const intensity = Math.min(1, Math.abs(perf) / 1.5);
+          const moveColor = perf >= 0 ? theme.up : theme.down;
+          const bg = `color-mix(in srgb, ${moveColor} ${18 + intensity * 30}%, ${theme.bg2})`;
+          return (
+            <div key={name} style={{
+              background: bg,
+              padding: '5px 6px', position: 'relative', overflow: 'hidden',
+              border: `1px solid ${theme.border}`, minWidth: 0, minHeight: 0,
+              display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+            }}>
+              <div style={{
+                color: theme.textBright, fontWeight: 800, fontSize: 9,
+                letterSpacing: 0, textTransform: 'uppercase', lineHeight: 1.12,
+                textShadow: `0 1px 2px ${theme.bg}`,
+                overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+              }}>
+                {name}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', gap: 4, marginTop: 2 }}>
+                <span style={{ color: moveColor, fontSize: 13, fontWeight: 900, fontVariantNumeric: 'tabular-nums', textShadow: `0 1px 2px ${theme.bg}` }}>
+                  {fmt.pct(perf)}
+                </span>
+                <span style={{ color: theme.dim, fontSize: 8, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{weight.toFixed(1)}%</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   Object.assign(window, {
-    Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores, OrderBook, OptionsFlow,
+    Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores, OrderBook, OptionsFlow, NewsFeed,
+    InsiderTx, ShortInterest, SectorHeatmap,
   });
 })();
