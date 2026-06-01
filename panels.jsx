@@ -685,8 +685,174 @@
     );
   }
 
+  // ─── Watchlist ───────────────────────────────────────────────
+  function Watchlist({ theme, tickers, currentSym, onPick }) {
+    const [sort, setSort] = React.useState({ key: 'composite', dir: -1 });
+    const sorted = [...tickers].sort((a, b) => {
+      const x = a[sort.key], y = b[sort.key];
+      return (x < y ? -1 : x > y ? 1 : 0) * sort.dir;
+    });
+    const Hdr = ({ k, children }) => (
+      <button onClick={() => setSort(s => ({ key: k, dir: s.key === k ? -s.dir : -1 }))}
+        style={{ background: 'none', border: 'none', color: theme.dim, fontFamily: theme.fontMono, fontSize: 8, letterSpacing: '0.06em', cursor: 'pointer', padding: 0, textAlign: 'inherit' }}>
+        {children}{sort.key === k ? (sort.dir < 0 ? ' ▼' : ' ▲') : ''}
+      </button>
+    );
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '52px 48px 44px 38px 36px 36px 32px',
+          gap: 4, padding: '0 4px 2px',
+          borderBottom: `1px solid ${theme.border}`,
+        }}>
+          <Hdr k="sym">SYM</Hdr>
+          <Hdr k="price">LAST</Hdr>
+          <Hdr k="pctChg">CHG%</Hdr>
+          <Hdr k="volume">VOL</Hdr>
+          <Hdr k="composite">QSCORE</Hdr>
+          <Hdr k="pe">P/E</Hdr>
+          <Hdr k="beta">β</Hdr>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {sorted.map(t => (
+            <button key={t.sym} onClick={() => onPick(t.sym)} style={{
+              display: 'grid', gridTemplateColumns: '52px 48px 44px 38px 36px 36px 32px',
+              gap: 4, padding: '1px 4px', width: '100%',
+              background: t.sym === currentSym ? theme.panelHi : 'transparent',
+              borderBottom: `1px dotted ${theme.border}`, border: 'none',
+              fontFamily: theme.fontMono, fontSize: 10,
+              textAlign: 'left', cursor: 'pointer', fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: t.sym === currentSym ? theme.warn : theme.accent, fontWeight: 700 }}>{t.sym}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{fmt.money(t.price)}</span>
+              <span style={{ color: t.pctChg >= 0 ? theme.up : theme.down, textAlign: 'right', fontWeight: 700 }}>{fmt.pct(t.pctChg)}</span>
+              <span style={{ color: theme.dim, textAlign: 'right' }}>{fmt.big(t.volume)}</span>
+              <span style={{ color: t.composite >= 70 ? theme.up : t.composite >= 50 ? theme.warn : theme.down, textAlign: 'right', fontWeight: 700 }}>{t.composite}</span>
+              <span style={{ color: theme.dim, textAlign: 'right' }}>{t.pe.toFixed(1)}</span>
+              <span style={{ color: theme.dim, textAlign: 'right' }}>{t.beta.toFixed(2)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Top Movers ─────────────────────────────────────────────
+  function TopMovers({ theme, tickers, onPick }) {
+    const [tab, setTab] = React.useState('GAIN');
+    const sorted = [...tickers].sort((a, b) => {
+      if (tab === 'GAIN') return b.pctChg - a.pctChg;
+      if (tab === 'LOSE') return a.pctChg - b.pctChg;
+      return b.volume - a.volume;
+    }).slice(0, 32);
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontFamily: theme.fontMono }}>
+        <div style={{ display: 'flex', gap: 2, marginBottom: 4 }}>
+          {[['GAIN', 'GAINERS'], ['LOSE', 'LOSERS'], ['ACTV', 'ACTIVE']].map(([k, l]) => (
+            <button key={k} onClick={() => setTab(k)} style={{
+              padding: '1px 8px', fontSize: 9, letterSpacing: '0.06em',
+              background: tab === k ? theme.accent : theme.panelHi,
+              color: tab === k ? theme.bg : theme.dim,
+              border: `1px solid ${tab === k ? theme.accent : theme.border}`,
+              cursor: 'pointer', fontFamily: theme.fontMono, fontWeight: 700,
+            }}>{l}</button>
+          ))}
+        </div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {sorted.map((t, i) => (
+            <button key={t.sym} onClick={() => onPick(t.sym)} style={{
+              display: 'grid', gridTemplateColumns: '14px 50px 1fr 48px 50px',
+              gap: 4, padding: '1px 4px', width: '100%',
+              background: 'transparent', borderBottom: `1px dotted ${theme.border}`, border: 'none',
+              fontFamily: theme.fontMono, fontSize: 10, textAlign: 'left', cursor: 'pointer',
+              fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: theme.dim, fontSize: 9 }}>{i+1}</span>
+              <span style={{ color: theme.accent, fontWeight: 700 }}>{t.sym}</span>
+              <span style={{ color: theme.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9 }}>{t.name}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{fmt.money(t.price)}</span>
+              <span style={{ color: t.pctChg >= 0 ? theme.up : theme.down, textAlign: 'right', fontWeight: 700 }}>{fmt.pct(t.pctChg)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Earnings Calendar ──────────────────────────────────────
+  function EarningsCal({ theme, list, currentSym, onPick }) {
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '42px 50px 1fr 32px 36px',
+          gap: 4, padding: '0 4px 2px',
+          borderBottom: `1px solid ${theme.border}`, color: theme.dim, fontSize: 8, letterSpacing: '0.05em',
+        }}>
+          <span>DATE</span><span>SYM</span><span>COMPANY</span><span>TIME</span><span style={{ textAlign: 'right' }}>EPS E</span>
+        </div>
+        {list.map((row, i) => {
+          const [date, sym, name, time, eps, note] = row;
+          const isCur = sym === currentSym;
+          return (
+            <button key={i} onClick={() => onPick(sym)} style={{
+              display: 'grid', gridTemplateColumns: '42px 50px 1fr 32px 36px',
+              gap: 4, padding: '1px 4px', width: '100%',
+              background: isCur ? theme.panelHi : 'transparent',
+              borderBottom: `1px dotted ${theme.border}`, border: 'none',
+              fontFamily: theme.fontMono, fontSize: 10, textAlign: 'left', cursor: 'pointer',
+              fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: theme.dim }}>{date}</span>
+              <span style={{ color: isCur ? theme.warn : theme.accent, fontWeight: 700 }}>{sym}</span>
+              <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+              <span style={{ color: time === 'AMC' ? theme.accent2 : theme.warn, fontWeight: 600 }}>{time}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{eps.toFixed(2)}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ─── Economic Calendar ──────────────────────────────────────
+  function EconCal({ theme, list }) {
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '42px 38px 1fr 42px 42px 32px',
+          gap: 4, padding: '0 4px 2px',
+          borderBottom: `1px solid ${theme.border}`, color: theme.dim, fontSize: 8, letterSpacing: '0.05em',
+        }}>
+          <span>DATE</span><span>TIME</span><span>EVENT</span><span style={{ textAlign: 'right' }}>EST</span><span style={{ textAlign: 'right' }}>PRIOR</span><span>IMP</span>
+        </div>
+        {list.map((row, i) => {
+          const [date, time, ctry, ev, est, prior, imp] = row;
+          const impColor = imp === 'HIGH' ? theme.down : imp === 'MED' ? theme.warn : theme.dim;
+          return (
+            <div key={i} style={{
+              display: 'grid', gridTemplateColumns: '42px 38px 1fr 42px 42px 32px',
+              gap: 4, padding: '1px 4px',
+              borderBottom: `1px dotted ${theme.border}`,
+              fontFamily: theme.fontMono, fontSize: 10,
+              fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: theme.dim }}>{date}</span>
+              <span style={{ color: theme.dim }}>{time}</span>
+              <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: theme.accent }}>{ctry} · </span>{ev}
+              </span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{est}</span>
+              <span style={{ color: theme.dim, textAlign: 'right' }}>{prior}</span>
+              <span style={{ color: impColor, fontWeight: 700, fontSize: 8 }}>● {imp}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   Object.assign(window, {
     Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores, OrderBook, OptionsFlow, NewsFeed,
-    InsiderTx, ShortInterest, SectorHeatmap,
+    InsiderTx, ShortInterest, SectorHeatmap, Watchlist, TopMovers, EarningsCal, EconCal,
   });
 })();
