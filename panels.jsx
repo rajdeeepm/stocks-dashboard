@@ -851,8 +851,203 @@
     );
   }
 
+  // ─── Trade Ideas ─────────────────────────────────────────────
+  function TradeIdeas({ theme, ideas, onPick, currentSym }) {
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        {ideas.map((it, i) => {
+          const isLong = it.side === 'LONG';
+          const isCur = it.sym === currentSym;
+          return (
+            <button key={i} onClick={() => onPick(it.sym)} style={{
+              display: 'grid', gridTemplateColumns: '36px 48px 1fr 28px',
+              gap: 4, padding: '3px 4px', width: '100%',
+              background: isCur ? theme.panelHi : 'transparent',
+              borderBottom: `1px dotted ${theme.border}`, border: 'none',
+              fontFamily: theme.fontMono, fontSize: 10, textAlign: 'left', cursor: 'pointer',
+            }}>
+              <span style={{
+                color: isLong ? theme.up : theme.down,
+                fontWeight: 700, fontSize: 9, alignSelf: 'start',
+                padding: '1px 3px', background: theme.bg2, border: `1px solid ${isLong ? theme.up : theme.down}`,
+                textAlign: 'center',
+              }}>{it.side}</span>
+              <span style={{ color: theme.accent, fontWeight: 700 }}>{it.sym}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9 }}>{it.thesis}</div>
+                <div style={{ color: theme.dim, fontSize: 8, marginTop: 1, fontVariantNumeric: 'tabular-nums' }}>
+                  TP {it.tp} · SL {it.sl} · R:R {it.rr.toFixed(1)}
+                </div>
+              </div>
+              <span style={{
+                color: it.conf >= 85 ? theme.up : it.conf >= 70 ? theme.warn : theme.dim,
+                fontWeight: 800, fontSize: 12, alignSelf: 'center', textAlign: 'right',
+                fontVariantNumeric: 'tabular-nums',
+              }}>{it.conf}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ─── Correlation Matrix ─────────────────────────────────────
+  function CorrMatrix({ theme, symbols, matrix }) {
+    return (
+      <div style={{ fontSize: 9, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', fontVariantNumeric: 'tabular-nums', width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={{ padding: 2, color: theme.dim, fontWeight: 400, fontSize: 8 }}></th>
+              {symbols.map(s => (
+                <th key={s} style={{ padding: '1px 2px', color: theme.accent, fontWeight: 700, fontSize: 9, textAlign: 'center' }}>{s}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {symbols.map(r => (
+              <tr key={r}>
+                <td style={{ padding: '1px 4px', color: theme.accent, fontWeight: 700, fontSize: 9 }}>{r}</td>
+                {symbols.map(c => {
+                  const v = matrix[r][c];
+                  const intensity = Math.min(1, Math.abs(v));
+                  const color = v >= 0 ? theme.up : theme.down;
+                  return (
+                    <td key={c} style={{
+                      padding: '1px 2px', textAlign: 'center', fontSize: 8,
+                      background: r === c ? theme.bg2 : color,
+                      color: r === c ? theme.dim : theme.bg,
+                      opacity: r === c ? 1 : 0.25 + intensity * 0.75,
+                      fontWeight: Math.abs(v) > 0.6 ? 700 : 400,
+                      border: `1px solid ${theme.bg}`,
+                    }}>{r === c ? '—' : v.toFixed(2)}</td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // ─── Portfolio P&L ──────────────────────────────────────────
+  function PortfolioPnL({ theme, positions, onPick, currentSym }) {
+    const totalMV = positions.reduce((s, p) => s + Math.abs(p.mv), 0);
+    const totalPnL = positions.reduce((s, p) => s + p.pnl, 0);
+    const dayPnL   = positions.reduce((s, p) => s + p.pnl * 0.018, 0);
+    const long  = positions.filter(p => p.side === 'LONG').reduce((s, p) => s + p.mv, 0);
+    const short = positions.filter(p => p.side === 'SHORT').reduce((s, p) => s + Math.abs(p.mv), 0);
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', display: 'grid', gridTemplateColumns: '320px 1fr', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+            <div style={{ padding: 6, background: theme.bg2, border: `1px solid ${theme.border}` }}>
+              <div style={{ color: theme.dim, fontSize: 8, letterSpacing: '0.06em' }}>NAV (GROSS)</div>
+              <div style={{ color: theme.textBright, fontSize: 16, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>${(totalMV/1000).toFixed(1)}K</div>
+            </div>
+            <div style={{ padding: 6, background: theme.bg2, border: `1px solid ${theme.border}` }}>
+              <div style={{ color: theme.dim, fontSize: 8, letterSpacing: '0.06em' }}>OPEN P&L</div>
+              <div style={{ color: totalPnL >= 0 ? theme.up : theme.down, fontSize: 16, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                {totalPnL >= 0 ? '+' : ''}${(totalPnL/1000).toFixed(1)}K
+              </div>
+            </div>
+            <div style={{ padding: 6, background: theme.bg2, border: `1px solid ${theme.border}` }}>
+              <div style={{ color: theme.dim, fontSize: 8, letterSpacing: '0.06em' }}>DAY P&L</div>
+              <div style={{ color: dayPnL >= 0 ? theme.up : theme.down, fontSize: 14, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                {dayPnL >= 0 ? '+' : ''}${(dayPnL/1000).toFixed(2)}K
+              </div>
+            </div>
+            <div style={{ padding: 6, background: theme.bg2, border: `1px solid ${theme.border}` }}>
+              <div style={{ color: theme.dim, fontSize: 8, letterSpacing: '0.06em' }}>EXPOSURE</div>
+              <div style={{ color: theme.text, fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{ color: theme.up }}>+{(long/1000).toFixed(0)}K</span> / <span style={{ color: theme.down }}>-{(short/1000).toFixed(0)}K</span>
+              </div>
+              <div style={{ color: theme.dim, fontSize: 8 }}>NET ${((long-short)/1000).toFixed(0)}K · GROSS ${((long+short)/1000).toFixed(0)}K</div>
+            </div>
+          </div>
+        </div>
+        <div style={{ overflow: 'auto' }}>
+          <div style={{
+            display: 'grid', gridTemplateColumns: '46px 46px 50px 50px 50px 60px 60px 44px',
+            gap: 4, padding: '0 4px 2px', color: theme.dim, fontSize: 8, letterSpacing: '0.05em',
+            borderBottom: `1px solid ${theme.border}`,
+          }}>
+            <span>SYM</span><span>SIDE</span><span style={{ textAlign: 'right' }}>QTY</span><span style={{ textAlign: 'right' }}>AVG</span>
+            <span style={{ textAlign: 'right' }}>LAST</span><span style={{ textAlign: 'right' }}>MV</span>
+            <span style={{ textAlign: 'right' }}>P&L $</span><span style={{ textAlign: 'right' }}>P&L %</span>
+          </div>
+          {positions.map(p => (
+            <button key={p.sym} onClick={() => onPick(p.sym)} style={{
+              display: 'grid', gridTemplateColumns: '46px 46px 50px 50px 50px 60px 60px 44px',
+              gap: 4, padding: '1px 4px', width: '100%',
+              background: p.sym === currentSym ? theme.panelHi : 'transparent',
+              borderBottom: `1px dotted ${theme.border}`, border: 'none',
+              fontFamily: theme.fontMono, fontSize: 10, textAlign: 'left', cursor: 'pointer',
+              fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: theme.accent, fontWeight: 700 }}>{p.sym}</span>
+              <span style={{ color: p.side === 'LONG' ? theme.up : theme.down, fontWeight: 700 }}>{p.side}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{fmt.num(p.qty)}</span>
+              <span style={{ color: theme.dim, textAlign: 'right' }}>{p.avg.toFixed(2)}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{p.last.toFixed(2)}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>${(p.mv/1000).toFixed(1)}K</span>
+              <span style={{ color: p.pnl >= 0 ? theme.up : theme.down, textAlign: 'right', fontWeight: 700 }}>
+                {p.pnl >= 0 ? '+' : ''}${(p.pnl/1000).toFixed(2)}K
+              </span>
+              <span style={{ color: p.pct >= 0 ? theme.up : theme.down, textAlign: 'right', fontWeight: 700 }}>{fmt.pct(p.pct)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Risk Metrics ───────────────────────────────────────────
+  function RiskMetrics({ theme, t, positions }) {
+    const totalMV = positions.reduce((s, p) => s + Math.abs(p.mv), 0);
+    const varDay = totalMV * 0.0218;
+    const stress = totalMV * 0.082;
+    const sharpe = 1.48;
+    const sortino = 2.12;
+    const maxDD  = -8.4;
+    const items = [
+      ['VaR 95% 1D',     '$' + fmt.big(varDay),   theme.warn],
+      ['VaR 99% 1D',     '$' + fmt.big(varDay*1.41), theme.down],
+      ['STRESS (-10%)',  '$' + fmt.big(stress),   theme.down],
+      ['SHARPE (TTM)',   sharpe.toFixed(2),       theme.up],
+      ['SORTINO',        sortino.toFixed(2),      theme.up],
+      ['CALMAR',         '1.92',                  theme.up],
+      ['MAX DD',         fmt.pct(maxDD),          theme.down],
+      ['BETA (PORT)',    '0.87',                  theme.text],
+      ['VOL 30D',        '14.2%',                 theme.text],
+      ['CORREL SPX',     '0.68',                  theme.text],
+      ['NET EXPOSURE',   '36%',                   theme.text],
+      ['GROSS EXP',      '142%',                  theme.warn],
+    ];
+    return (
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)',
+        gap: 2, fontSize: 10, fontFamily: theme.fontMono,
+        height: '100%', overflow: 'auto', alignContent: 'start', paddingRight: 2,
+      }}>
+        {items.map(([k, v, c]) => (
+          <div key={k} style={{
+            display: 'flex', justifyContent: 'space-between',
+            padding: '3px 6px',
+            background: theme.bg2, border: `1px solid ${theme.border}`,
+          }}>
+            <span style={{ color: theme.dim, fontSize: 9 }}>{k}</span>
+            <span style={{ color: c, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   Object.assign(window, {
     Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores, OrderBook, OptionsFlow, NewsFeed,
     InsiderTx, ShortInterest, SectorHeatmap, Watchlist, TopMovers, EarningsCal, EconCal,
+    TradeIdeas, CorrMatrix, PortfolioPnL, RiskMetrics,
   });
 })();
