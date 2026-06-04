@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PHOSPHOR · Quant Terminal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #050402; }
+    body { font-family: 'IBM Plex Mono', monospace; -webkit-font-smoothing: antialiased; }
+    /* Full-viewport dashboard shell */
+    .stage {
+      position: fixed; inset: 0;
+      display: flex; align-items: stretch; justify-content: stretch;
+      background: #050402;
+    }
+    .canvas {
+      width: 100vw; height: 100vh;
+      position: relative;
+    }
+    .glow {
+      box-shadow: 0 0 0 1px rgba(255,170,0,0.4), 0 0 60px rgba(255,170,0,0.18), 0 0 140px rgba(255,170,0,0.12);
+    }
+    /* Phosphor text glow */
+    .phosphor-glow * {
+      text-shadow: 0 0 1px currentColor, 0 0 4px currentColor;
+    }
+    .phosphor-glow svg {
+      filter: drop-shadow(0 0 0.8px currentColor);
+    }
+    /* Vignette */
+    .vignette::after {
+      content: '';
+      position: absolute; inset: 0;
+      pointer-events: none;
+      background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.55) 100%);
+      z-index: 90;
+    }
+    /* CRT curvature */
+    .curved {
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    /* Scrollbars */
+    *::-webkit-scrollbar { width: 6px; height: 6px; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb { background: rgba(245,179,64,0.18); }
+    button:hover { filter: brightness(1.25); }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <div id="canvas" class="canvas"></div>
+  </div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script src="data.js"></script>
+  <script src="themes.js"></script>
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+  <script type="text/babel" src="chart.jsx"></script>
+  <script type="text/babel" src="panels.jsx"></script>
+  <script type="text/babel" src="dashboard.jsx"></script>
+
+  <script type="text/babel" data-presets="env,react">
+    const { useState, useEffect, useMemo } = React;
+
+    // Tweakable phosphor palette presets
+    const PHOSPHOR_PRESETS = {
+      amber:  { text:'#f5b340', textBright:'#ffd060', dim:'#7e5d2e', dimmer:'#4a3a1e', accent:'#ffaa00', accent2:'#ff6a00', warn:'#ffd060', up:'#7adc6a', down:'#d65a3c', flat:'#a48848', border:'#2a2114', borderHi:'#3d2f1c', panelHi:'#15100a', glowColor:'255,170,0' },
+      green:  { text:'#6affa0', textBright:'#a8ffb8', dim:'#3a8a4c', dimmer:'#1f4a2c', accent:'#3aff70', accent2:'#88ff44', warn:'#d8ff60', up:'#88ff70', down:'#ff5a44', flat:'#5a9866', border:'#0e3a1c', borderHi:'#1a5a2c', panelHi:'#06180a', glowColor:'58,255,112' },
+      cyan:   { text:'#5cd5ff', textBright:'#a0e8ff', dim:'#3a7a98', dimmer:'#1f4258', accent:'#00d4ff', accent2:'#5a8aff', warn:'#a0e8ff', up:'#5cffb8', down:'#ff6a8c', flat:'#5e9ab0', border:'#0e2a40', borderHi:'#1c4870', panelHi:'#06121e', glowColor:'92,213,255' },
+      white:  { text:'#d8d2c0', textBright:'#ffffff', dim:'#7a7468', dimmer:'#3a382e', accent:'#ffffff', accent2:'#d8c898', warn:'#fff0c0', up:'#a8d68a', down:'#ff7766', flat:'#a09680', border:'#2c2820', borderHi:'#3e382c', panelHi:'#16140e', glowColor:'232,224,200' },
+    };
+
+    function App() {
+      const [t, setTweak] = useTweaks(/*EDITMODE-BEGIN*/{
+        "phosphor": "#ffaa00",
+        "scanlines": 0.55,
+        "glow": true,
+        "vignette": true,
+        "curvature": false,
+        "ticker": "NVDA"
+      }/*EDITMODE-END*/);
+
+      const T = window.Themes;
+      const PHOSPHOR_BY_HEX = {
+        '#ffaa00': PHOSPHOR_PRESETS.amber,
+        '#3aff70': PHOSPHOR_PRESETS.green,
+        '#00d4ff': PHOSPHOR_PRESETS.cyan,
+        '#d8d2c0': PHOSPHOR_PRESETS.white,
+      };
+      const preset = PHOSPHOR_BY_HEX[t.phosphor] || PHOSPHOR_PRESETS.amber;
+      const theme = useMemo(() => ({
+        ...T.phosphor,
+        ...preset,
+        scanlines: false, // we apply our own with intensity
+        glow: false,
+      }), [t.phosphor]);
+
+      const canvasClasses = [
+        t.glow ? 'phosphor-glow glow' : '',
+        t.vignette ? 'vignette' : '',
+        t.curvature ? 'curved' : '',
+      ].filter(Boolean).join(' ');
+
+      return (
+        <>
+          <div id="phosphor-canvas-inner"
+               className={canvasClasses}
+               style={{ width: '100%', height: '100%', position: 'relative', background: theme.bg }}>
+            {/* Scanlines layer */}
+            {t.scanlines > 0 && (
+              <div style={{
+                position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 95,
+                backgroundImage: `repeating-linear-gradient(0deg, transparent 0 2px, rgba(0,0,0,${t.scanlines * 0.35}) 2px 3px)`,
+                mixBlendMode: 'multiply',
+              }} />
+            )}
+            {/* Slight horizontal RGB shimmer for CRT feel */}
+            {t.glow && (
+              <div style={{
+                position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 96,
+                background: `radial-gradient(ellipse at 50% 0%, rgba(${preset.glowColor},0.04), transparent 60%)`,
+              }} />
+            )}
+            <Dashboard theme={theme} initialTicker={t.ticker} />
+          </div>
+
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('canvas')).render(<App />);
+  </script>
+</body>
+</html>
