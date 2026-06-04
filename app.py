@@ -1064,6 +1064,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/"):
             self.handle_api(parsed)
             return
+        if parsed.path == "/":
+            self.path = "/Phosphor.html"
         super().do_GET()
 
     def handle_api(self, parsed: urllib.parse.ParseResult):

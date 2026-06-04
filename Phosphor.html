@@ -131,6 +131,26 @@
             <Dashboard theme={theme} initialTicker={t.ticker} />
           </div>
 
+          <TweaksPanel title="PHOSPHOR · TUNING">
+            <TweakSection label="Display" />
+            <TweakColor label="Phosphor color"
+              value={t.phosphor}
+              onChange={v => setTweak('phosphor', v)}
+              options={['#ffaa00', '#3aff70', '#00d4ff', '#d8d2c0']} />
+            <TweakSlider label="Scanline intensity"
+              value={Math.round(t.scanlines * 100)} min={0} max={100} step={5} unit="%"
+              onChange={v => setTweak('scanlines', v / 100)} />
+            <TweakToggle label="Phosphor glow"
+              value={t.glow} onChange={v => setTweak('glow', v)} />
+            <TweakToggle label="CRT vignette"
+              value={t.vignette} onChange={v => setTweak('vignette', v)} />
+            <TweakToggle label="Rounded bezel"
+              value={t.curvature} onChange={v => setTweak('curvature', v)} />
+            <TweakSection label="Featured ticker" />
+            <TweakSelect label="Default ticker"
+              value={t.ticker} onChange={v => setTweak('ticker', v)}
+              options={window.MarketData.TICKERS.map(x => x.sym)} />
+          </TweaksPanel>
         </>
       );
     }

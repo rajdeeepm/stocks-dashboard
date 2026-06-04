@@ -33,6 +33,7 @@ The app is built for personal research and education. It does not place trades a
 - Charts close price with 20-day and 50-day moving averages.
 - Calculates trend, 1-month momentum, RSI, volatility, drawdown, and volume pulse.
 - Pulls market or symbol-specific Google News headlines and applies lightweight headline-tone scoring.
+- Serves the restored `Phosphor.html` design at `/` and keeps its fixed CRT terminal layout intact.
 - Adds a global market dashboard selector in the Phosphor header. Each market gets its own scoped universe, movers, watchlist, correlation matrix, quote refresh, and index ribbon.
 - Keeps the symbol picker broader than the live quote loop: the dropdown/search uses the market directory, while dashboard panels quote a liquid focus list to stay responsive.
 
