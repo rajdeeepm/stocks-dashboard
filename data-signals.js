@@ -289,7 +289,165 @@
     return { total: signals.length, live: live.length, decay: decay.length, hitTp: hitTp.length, hitSl: hitSl.length, expired: expired.length, winRate, avgPnL, grossPnL };
   }
 
+  // ─── WEEKLY CYCLE ──────────────────────────────────────────────
+  const WEEKLY = {
+    weekOf: 'WEEK 21 · MAY 18-22, 2026',
+    today: 'MON',  // Monday is screen day
+    days: [
+      {
+        key: 'MON',
+        label: 'SCREEN',
+        title: 'Universe Scan',
+        purpose: 'Run quant screens across full universe. Output: candidate longlist for Tuesday.',
+        tasks: [
+          { done: true,  text: 'Refresh prices, factors, fundamentals (auto · 06:30 ET)' },
+          { done: true,  text: 'Run 7 factor screens (Momentum, Quality, Value, etc.)' },
+          { done: true,  text: 'Apply regime overlay — boost RISK_ON/EXPANSION fit' },
+          { done: true,  text: 'Filter: ADV > $50M, market cap > $5B, no earnings ≤ 5d' },
+          { done: false, text: 'Manually review 22 longlist candidates' },
+          { done: false, text: 'Cut to 10 for Tuesday deep-dive (deadline 16:00 ET)' },
+        ],
+        outputs: [
+          'Longlist: 22 names · 14 LONG / 8 SHORT',
+          'Top by composite: NVDA(88), AVGO(86), LLY(85), META(82), MSFT(81)',
+          'Best regime-fit: MOM_BREAKOUT (4 signals), QLT_COMPOUND (5)',
+        ],
+      },
+      {
+        key: 'TUE',
+        label: 'DEEP DIVE',
+        title: 'Research the Shortlist',
+        purpose: 'Build full thesis on 10 shortlist candidates. Output: 5 green-lit, 5 cut.',
+        tasks: [
+          { done: false, text: 'Read most recent 10-Q + earnings transcript per name' },
+          { done: false, text: 'Refresh DCF assumptions; sanity-check fair value' },
+          { done: false, text: 'Map comp set; check relative valuation' },
+          { done: false, text: 'Identify primary catalyst + invalidation' },
+          { done: false, text: 'Score thesis on 5-pt rubric → cut anything < 3' },
+        ],
+        outputs: ['(Pending)'],
+      },
+      {
+        key: 'WED',
+        label: 'SIZE',
+        title: 'Position Sizing',
+        purpose: 'Convert green-lit ideas to weighted positions. Output: target book.',
+        tasks: [
+          { done: false, text: 'Run Kelly fraction per signal (capped at 5%)' },
+          { done: false, text: 'Apply concentration limits (≤20% per sector)' },
+          { done: false, text: 'Net + gross exposure within risk budget' },
+          { done: false, text: 'Pre-trade compliance check' },
+        ],
+        outputs: ['(Pending)'],
+      },
+      {
+        key: 'THU',
+        label: 'EXECUTE',
+        title: 'Trade Day',
+        purpose: 'Place orders. TWAP into illiquids, MOC for large blocks.',
+        tasks: [
+          { done: false, text: 'Pre-market: review overnight news, gap risk' },
+          { done: false, text: 'Stage orders in EMS by 09:00 ET' },
+          { done: false, text: 'Execute 09:30-11:00 (TWAP) and 15:30-16:00 (MOC)' },
+          { done: false, text: 'Reconcile fills; log slippage' },
+        ],
+        outputs: ['(Pending)'],
+      },
+      {
+        key: 'FRI',
+        label: 'REVIEW',
+        title: 'Post-mortem & Journal',
+        purpose: 'Review closed positions. Update playbook. Journal lessons.',
+        tasks: [
+          { done: false, text: 'Tag closed positions: thesis right/wrong, execution good/bad' },
+          { done: false, text: 'Write 3 lessons to journal' },
+          { done: false, text: 'Update regime view based on week\'s data' },
+          { done: false, text: 'Refresh blocklist (broken theses for 8wk cooldown)' },
+        ],
+        outputs: ['(Pending)'],
+      },
+    ],
+    // Last-4-weeks rolling perf
+    rollingPerf: [
+      { week: 'W17', signals: 18, hit: 11, miss: 4, expired: 3, pnl: +2.84 },
+      { week: 'W18', signals: 24, hit: 14, miss: 6, expired: 4, pnl: +1.42 },
+      { week: 'W19', signals: 20, hit: 12, miss: 5, expired: 3, pnl: +0.74 },
+      { week: 'W20', signals: 22, hit: 13, miss: 6, expired: 3, pnl: +1.68 },
+    ],
+  };
+
+  // ─── AGENTS (structured-reasoning, not personas) ────────────────
+  const AGENTS_V2 = [
+    {
+      id: 'TREND', name: 'TREND ANALYST',
+      framework: 'Trend-following · momentum',
+      what_i_see: (t) => `${t.sym} ${t.price > t.yLow*1.4 ? 'in established uptrend' : 'consolidating'}. Price/200DMA: ${((t.price/(t.yLow*1.15))*100-100).toFixed(0)}% above. Momentum factor: ${t.factors.momentum}.`,
+      framework_says: (t) => t.factors.momentum >= 70
+        ? 'Strong relative-strength setups historically run 18-32 days post-confirmation. Position in the direction of the trend until it breaks.'
+        : 'Below 60 = no trade. Need confirmation.',
+      conclusion: (t) => t.factors.momentum >= 70 ? 'BUY' : t.factors.momentum >= 50 ? 'WATCH' : 'AVOID',
+      invalidation: (t) => `Close below ${(t.price * 0.92).toFixed(2)} (-8%) or momentum factor under 55.`,
+      color: '#ffaa00',
+    },
+    {
+      id: 'VAL', name: 'VALUE ANALYST',
+      framework: 'Intrinsic value · margin of safety',
+      what_i_see: (t) => `P/E ${t.pe.toFixed(1)}× (sector ~${(t.pe*1.3).toFixed(0)}×). P/B ${t.pb.toFixed(1)}. Beta ${t.beta.toFixed(2)}. Div ${t.div ? t.div.toFixed(2)+'%' : 'none'}.`,
+      framework_says: (t) => t.pe < 18 && t.factors.value > 60
+        ? 'Trading at meaningful discount to peers AND sector. Margin of safety present. Buy if quality factor confirms.'
+        : 'No discount available. Multiple expansion required to make money — too speculative.',
+      conclusion: (t) => t.pe < 18 && t.factors.value > 60 ? 'BUY' : t.pe < 22 ? 'HOLD' : 'PASS',
+      invalidation: (t) => `Multiple re-rates higher with no earnings growth, or revenue declines.`,
+      color: '#88aa44',
+    },
+    {
+      id: 'QUAL', name: 'QUALITY ANALYST',
+      framework: 'Compounders · durable returns',
+      what_i_see: (t) => `Quality score ${t.factors.quality}. Composite ${t.composite}. Sector: ${t.sector}.`,
+      framework_says: (t) => t.factors.quality >= 70
+        ? 'Top-decile quality. Owning these for 3-5 years compounds at GDP+ regardless of cycle. Volatility is opportunity to add.'
+        : 'Below threshold for core holding. Could be tactical only.',
+      conclusion: (t) => t.factors.quality >= 75 ? 'CORE BUY' : t.factors.quality >= 60 ? 'TACTICAL' : 'AVOID',
+      invalidation: (t) => 'ROIC trend breaks, or management capital allocation deteriorates (M&A, buybacks at peak).',
+      color: '#5cd5ff',
+    },
+    {
+      id: 'MACRO', name: 'MACRO ANALYST',
+      framework: 'Top-down · regime-conditional',
+      what_i_see: (t) => `Regime: ${REGIME.axes.risk.value} / ${REGIME.axes.growth.value} / rates ${REGIME.axes.rates.value}. ${t.sector} ${REGIME.rotation.overweight.includes(t.sector) ? 'OVERWEIGHT' : REGIME.rotation.underweight.includes(t.sector) ? 'UNDERWEIGHT' : 'NEUTRAL'} in our framework.`,
+      framework_says: (t) => REGIME.rotation.overweight.includes(t.sector)
+        ? 'Sector is favored by current regime. Names with high beta to sector get bonus weight.'
+        : REGIME.rotation.underweight.includes(t.sector) ? 'Sector is headwind. Need stock-specific edge to override.' : 'Sector neutral. Stock-picking matters more than macro.',
+      conclusion: (t) => REGIME.rotation.overweight.includes(t.sector) ? 'TAILWIND' : REGIME.rotation.underweight.includes(t.sector) ? 'HEADWIND' : 'NEUTRAL',
+      invalidation: (t) => 'Regime flips — HY OAS > 350bps, VIX > 22, breadth collapse.',
+      color: '#a868ff',
+    },
+    {
+      id: 'RISK', name: 'RISK ANALYST',
+      framework: 'Tail risk · convexity · sizing',
+      what_i_see: (t) => `Beta ${t.beta.toFixed(2)}. 30d vol ~${(t.beta*16).toFixed(0)}%. Short int ${t.shortPct}%. DTC ${t.dtc}.`,
+      framework_says: (t) => t.beta > 1.5
+        ? 'High beta in current frothy positioning = first to unwind. Size at half of Kelly. Wide stop.'
+        : 'Vol manageable. Standard 2% portfolio risk per position.',
+      conclusion: (t) => t.beta > 1.6 ? 'SIZE DOWN' : t.beta > 1.2 ? 'STANDARD' : 'NORMAL',
+      invalidation: (t) => 'VIX > 18 AND breadth narrows = de-risk regardless of thesis.',
+      color: '#ff5a44',
+    },
+    {
+      id: 'FLOW', name: 'FLOW ANALYST',
+      framework: 'Positioning · options · dealer hedging',
+      what_i_see: (t) => `Short interest ${t.shortPct}%. DTC ${t.dtc}d. ${t.shortPct > 7 ? 'Crowded short — squeeze risk.' : 'Light positioning.'} `,
+      framework_says: (t) => t.shortPct < 3 && t.factors.momentum > 70
+        ? 'Light short positioning + strong momentum = no obvious unwind catalyst. Can grind higher.'
+        : t.shortPct > 8 ? 'Crowded short + improving fundamentals = asymmetric squeeze setup.' : 'No actionable positioning signal.',
+      conclusion: (t) => t.shortPct > 8 ? 'SQUEEZE' : t.shortPct < 3 ? 'CLEAN' : 'NEUTRAL',
+      invalidation: (t) => 'Flow data reverses — call skew flattens or institutional selling appears.',
+      color: '#ff6abc',
+    },
+  ];
+
   Object.assign(window.MarketData, {
-    REGIME, SIGNALS, METHODS, generateSignals, signalStats,
+    REGIME, SIGNALS, METHODS, WEEKLY, AGENTS_V2,
+    generateSignals, signalStats,
   });
 })();
