@@ -258,7 +258,143 @@
     );
   }
 
-  Object.assign(window, {
-    ResearchScreen, FinTable, DcfView,
-  });
+  function EarningsView({ theme, earn }) {
+    const W = 240, H = 70;
+    const maxAbs = Math.max(...earn.map(e => Math.abs(e.surprise)));
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 70 }}>
+          <line x1={0} x2={W} y1={H/2} y2={H/2} stroke={theme.border} strokeWidth={0.5} />
+          {earn.map((e, i) => {
+            const x = (i + 0.5) * (W / earn.length);
+            const h = (Math.abs(e.surprise) / maxAbs) * (H/2 - 5);
+            return (
+              <g key={i}>
+                <rect x={x - 8} y={e.surprise >= 0 ? H/2 - h : H/2}
+                      width={16} height={h} fill={e.surprise >= 0 ? theme.up : theme.down} opacity={0.8} />
+                <text x={x} y={H - 2} fill={theme.dim} fontSize={7} textAnchor="middle">{e.q}</text>
+              </g>
+            );
+          })}
+        </svg>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '46px 38px 38px 44px', gap: 2,
+          padding: '0 4px 2px', color: theme.dim, fontSize: 8, borderBottom: `1px solid ${theme.border}`,
+        }}>
+          <span>QTR</span><span style={{ textAlign: 'right' }}>EST</span><span style={{ textAlign: 'right' }}>ACT</span><span style={{ textAlign: 'right' }}>SURP</span>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {earn.map((e, i) => (
+            <div key={i} style={{
+              display: 'grid', gridTemplateColumns: '46px 38px 38px 44px', gap: 2,
+              padding: '2px 4px', borderBottom: `1px dotted ${theme.border}`,
+              fontSize: 10, fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: theme.text }}>{e.q}</span>
+              <span style={{ color: theme.dim, textAlign: 'right' }}>{e.est.toFixed(2)}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{e.actual.toFixed(2)}</span>
+              <span style={{ color: e.surprise >= 0 ? theme.up : theme.down, textAlign: 'right', fontWeight: 700 }}>{fmt.pct(e.surprise, 1)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function CompsTable({ theme, t, peers, onPick }) {
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '48px 1fr 60px 40px 40px 40px 40px 32px 38px',
+          gap: 4, padding: '0 4px 2px', color: theme.dim, fontSize: 8, letterSpacing: '0.05em',
+          borderBottom: `1px solid ${theme.border}`,
+        }}>
+          <span>SYM</span><span>NAME</span><span style={{textAlign:'right'}}>MCAP</span>
+          <span style={{textAlign:'right'}}>P/E</span><span style={{textAlign:'right'}}>FWD</span>
+          <span style={{textAlign:'right'}}>P/B</span><span style={{textAlign:'right'}}>β</span>
+          <span style={{textAlign:'right'}}>Q</span><span style={{textAlign:'right'}}>CHG%</span>
+        </div>
+        {peers.map((p, i) => (
+          <button key={p.sym} onClick={() => onPick(p.sym)} style={{
+            display: 'grid', gridTemplateColumns: '48px 1fr 60px 40px 40px 40px 40px 32px 38px',
+            gap: 4, padding: '2px 4px', width: '100%',
+            background: p.sym === t.sym ? theme.panelHi : 'transparent',
+            borderBottom: `1px dotted ${theme.border}`, border: 'none',
+            fontFamily: theme.fontMono, fontSize: 10, textAlign: 'left', cursor: 'pointer',
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            <span style={{ color: p.sym === t.sym ? theme.warn : theme.accent, fontWeight: 700 }}>{p.sym}</span>
+            <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9 }}>{p.name}</span>
+            <span style={{ color: theme.text, textAlign: 'right' }}>{fmt.bigPlain(p.mcap)}</span>
+            <span style={{ color: theme.text, textAlign: 'right' }}>{p.pe.toFixed(1)}</span>
+            <span style={{ color: theme.dim, textAlign: 'right' }}>{p.fwdPe.toFixed(1)}</span>
+            <span style={{ color: theme.dim, textAlign: 'right' }}>{p.pb.toFixed(1)}</span>
+            <span style={{ color: theme.dim, textAlign: 'right' }}>{p.beta.toFixed(2)}</span>
+            <span style={{ color: p.composite >= 70 ? theme.up : p.composite >= 50 ? theme.warn : theme.down, textAlign: 'right', fontWeight: 700 }}>{p.composite}</span>
+            <span style={{ color: p.pctChg >= 0 ? theme.up : theme.down, textAlign: 'right', fontWeight: 700 }}>{fmt.pct(p.pctChg)}</span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  function RatingsList({ theme, ratings, t }) {
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 70px 56px 42px 42px',
+          gap: 4, padding: '0 4px 2px', color: theme.dim, fontSize: 8, letterSpacing: '0.05em',
+          borderBottom: `1px solid ${theme.border}`,
+        }}>
+          <span>BANK</span><span>REC</span><span style={{textAlign:'right'}}>TARGET</span><span style={{textAlign:'right'}}>UPSIDE</span><span>DATE</span>
+        </div>
+        {ratings.list.map((r, i) => {
+          const isBuy = /BUY|OUTPERFORM|OVERWEIGHT/.test(r.rec);
+          const isSell = /SELL|UNDERPERFORM|UNDERWEIGHT/.test(r.rec);
+          const c = isBuy ? theme.up : isSell ? theme.down : theme.warn;
+          const upside = (r.target / t.price - 1) * 100;
+          return (
+            <div key={i} style={{
+              display: 'grid', gridTemplateColumns: '1fr 70px 56px 42px 42px',
+              gap: 4, padding: '2px 4px', borderBottom: `1px dotted ${theme.border}`,
+              fontSize: 10, fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.bank}</span>
+              <span style={{ color: c, fontWeight: 700, fontSize: 9 }}>{r.rec}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{fmt.money(r.target)}</span>
+              <span style={{ color: upside >= 0 ? theme.up : theme.down, textAlign: 'right', fontWeight: 700 }}>{fmt.pct(upside, 0)}</span>
+              <span style={{ color: theme.dim }}>{r.date}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function OwnershipView({ theme, own, t }) {
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ height: 16, display: 'flex', marginBottom: 6, border: `1px solid ${theme.border}` }}>
+          <div style={{ width: (own.inst * 100) + '%', background: theme.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, color: theme.bg, fontWeight: 800 }}>INST {(own.inst*100).toFixed(0)}%</div>
+          <div style={{ width: (own.retail * 100) + '%', background: theme.warn, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, color: theme.bg, fontWeight: 800 }}>RTL {(own.retail*100).toFixed(0)}%</div>
+          <div style={{ width: (own.insider * 100) + '%', background: theme.down, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, color: theme.bg, fontWeight: 800 }}>INS</div>
+        </div>
+        <div style={{ color: theme.dim, fontSize: 9, marginBottom: 3, letterSpacing: '0.06em' }}>TOP HOLDERS</div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {own.topHolders.map(([h, w], i) => (
+            <div key={i} style={{
+              display: 'grid', gridTemplateColumns: '1fr 40px', gap: 4,
+              padding: '2px 4px', borderBottom: `1px dotted ${theme.border}`,
+              fontSize: 10,
+            }}>
+              <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h}</span>
+              <span style={{ color: theme.dim, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(w * 100).toFixed(2)}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  Object.assign(window, { ResearchScreen, FinTable, DcfView, CompsTable, RatingsList, OwnershipView, EarningsView });
 })();
