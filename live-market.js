@@ -367,4 +367,57 @@
     M.TRADE_IDEAS.splice(0, M.TRADE_IDEAS.length, ...ideas);
   }
 
+  function newsTopicKey(symbol, tab) {
+    const sym = String(symbol || "market").toUpperCase();
+    if (tab === "MKT") return `${state.market}:MKT`;
+    if (tab === "EARN") return `${sym}:EARN`;
+    if (tab === "M&A") return `${sym}:MA`;
+    return sym;
+  }
+
+  function setNews(symbol, payload) {
+    const now = Date.now();
+    const key = String(symbol || "market").toUpperCase();
+    state.liveNews[key] = (payload.items || []).map((item) => {
+      const published = item.published ? Date.parse(item.published) : now;
+      const minsAgo = Number.isFinite(published) ? Math.max(1, Math.round((now - published) / 60000)) : 1;
+      return {
+        head: item.title,
+        src: item.source || "Google News",
+        minsAgo,
+        link: item.link,
+        sentiment: item.sentiment,
+      };
+    });
+  }
+
+  async function refreshNews(symbol) {
+    const sym = String(symbol || "market").toUpperCase();
+    const cfg = MARKET_CONFIG[state.market] || MARKET_CONFIG.US;
+    const marketQuery = `${cfg.name || state.market} stock market`;
+    const topics = [
+      [newsTopicKey(sym, "SYM"), sym === "MARKET" ? "stock market" : `${sym} stock`],
+      [newsTopicKey(sym, "MKT"), marketQuery],
+      [newsTopicKey(sym, "EARN"), `${sym} earnings results guidance`],
+      [newsTopicKey(sym, "M&A"), `${sym} merger acquisition activist strategic review`],
+    ];
+    await Promise.allSettled(topics.map(([key, query]) => (
+      api(`/api/news?query=${encodeURIComponent(query)}&limit=14`).then((payload) => setNews(key, payload))
+    )));
+  }
+
+  async function refreshQuotes(symbols) {
+    const unique = [...new Set(symbols.filter(Boolean).map((sym) => String(sym).toUpperCase()))];
+    if (!unique.length) return;
+    const payload = await api(`/api/quote?symbols=${encodeURIComponent(unique.join(","))}`);
+    for (const quote of payload.items || []) applyQuote(quote);
+    updateDerived();
+  }
+
+  async function refreshHistory(symbol, range) {
+    const payload = await api(`/api/history?symbol=${encodeURIComponent(symbol)}&range=${range || "1y"}`);
+    applyHistory(symbol, payload.items || [], payload.range || range, payload.interval);
+    updateDerived();
+  }
+
 })();
