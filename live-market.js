@@ -255,4 +255,116 @@
     }
   }
 
+  function updateIndices() {
+    const cfg = MARKET_CONFIG[state.market] || MARKET_CONFIG.US;
+    if (state.market !== "US") {
+      cfg.indices.forEach(([label, symbol], i) => {
+        const ticker = M.BY_SYM[symbol];
+        if (M.INDICES[i]) {
+          M.INDICES[i][0] = label;
+          M.INDICES[i][1] = MARKET_CONFIG[state.market].name;
+          M.INDICES[i][2] = ticker ? ticker.price : M.INDICES[i][2];
+          M.INDICES[i][3] = ticker ? ticker.pctChg : M.INDICES[i][3];
+        }
+      });
+      for (let i = cfg.indices.length; i < M.INDICES.length; i += 1) {
+        const ticker = M.MARKET_TICKERS[(i - cfg.indices.length) % Math.max(1, M.MARKET_TICKERS.length)];
+        if (ticker) {
+          M.INDICES[i][0] = ticker.sym.replace(/\..+$/, "").slice(0, 6);
+          M.INDICES[i][1] = ticker.name;
+          M.INDICES[i][2] = ticker.price;
+          M.INDICES[i][3] = ticker.pctChg;
+        }
+      }
+      return;
+    }
+    for (const index of M.INDICES) {
+      const proxy = INDEX_PROXY[index[0]];
+      if (proxy && M.BY_SYM[proxy]) {
+        index[2] = M.BY_SYM[proxy].price;
+        index[3] = M.BY_SYM[proxy].pctChg;
+      }
+    }
+  }
+
+  function updateSectors() {
+    if (state.sectorMap.length) {
+      state.sectorMap.slice(0, M.SECTORS.length).forEach((row, i) => {
+        M.SECTORS[i][0] = row.name;
+        M.SECTORS[i][1] = row.weight;
+        M.SECTORS[i][2] = row.performance;
+      });
+      return;
+    }
+    if (state.market !== "US") {
+      const tickers = M.MARKET_TICKERS || [];
+      for (let i = 0; i < M.SECTORS.length; i += 1) {
+        const group = tickers.filter((_, idx) => idx % M.SECTORS.length === i);
+        const moves = group.map((ticker) => ticker.pctChg).filter((value) => Number.isFinite(value));
+        M.SECTORS[i][0] = group[0]?.industry || group[0]?.sector || M.SECTORS[i][0];
+        M.SECTORS[i][1] = group.length ? +(100 / Math.max(1, tickers.length) * group.length).toFixed(1) : M.SECTORS[i][1];
+        if (moves.length) M.SECTORS[i][2] = +(moves.reduce((sum, value) => sum + value, 0) / moves.length).toFixed(2);
+      }
+      return;
+    }
+    for (const sector of M.SECTORS) {
+      const symbols = SECTOR_MAP[sector[0]] || [];
+      const moves = symbols.map((sym) => M.BY_SYM[sym]?.pctChg).filter((value) => Number.isFinite(value));
+      if (moves.length) sector[2] = +(moves.reduce((sum, value) => sum + value, 0) / moves.length).toFixed(2);
+    }
+  }
+
+  function updatePortfolio() {
+    for (const p of M.PORTFOLIO) {
+      const t = M.BY_SYM[p.sym];
+      if (!t) continue;
+      p.last = t.price;
+      p.mv = p.qty * p.last;
+      p.pnl = (p.last - p.avg) * p.qty;
+      p.pct = ((p.last - p.avg) / p.avg) * 100 * (p.qty < 0 ? -1 : 1);
+    }
+  }
+
+  function updateTradeIdeas() {
+    const signalIdeas = state.signals.slice(0, 24).map((signal) => {
+        const longBias = signal.action === "LONG_CANDIDATE" || signal.action === "WATCH";
+        const price = signal.price || M.BY_SYM[signal.symbol]?.price || 0;
+        const conf = Math.round(signal.confidence || signal.score || 50);
+        return {
+          side: longBias ? "LONG" : "SHORT",
+          sym: signal.symbol,
+          conf,
+          thesis: `${signal.action} · score ${Number(signal.score || 0).toFixed(1)} · ${(signal.reasons || ["signal trust"])[0]}`,
+          tp: Math.round(price * (longBias ? 1.08 : 0.94) * 100) / 100,
+          sl: Math.round(price * (longBias ? 0.96 : 1.04) * 100) / 100,
+          rr: +(1.1 + conf / 80).toFixed(1),
+          trust: signal,
+        };
+      });
+    const ranked = (M.MARKET_TICKERS || M.TICKERS).slice(0, 160).map((t) => {
+      const longBias = t.composite >= 55;
+      const side = longBias ? "LONG" : "SHORT";
+      const conf = Math.round(clamp(longBias ? t.composite : 100 - t.composite, 45, 96));
+      const move = Math.abs(t.pctChg || 0);
+      const tp = longBias ? t.price * (1 + (0.05 + move / 100)) : t.price * (1 - (0.045 + move / 100));
+      const sl = longBias ? t.price * (1 - 0.035) : t.price * (1 + 0.035);
+      return {
+        side,
+        sym: t.sym,
+        conf,
+        thesis: `${t.factors.momentum >= 60 ? "Momentum" : "Mean reversion"} + live tape + ${t.sector}`,
+        tp: Math.round(tp * 100) / 100,
+        sl: Math.round(sl * 100) / 100,
+        rr: +(1.2 + conf / 70).toFixed(1),
+      };
+    }).sort((a, b) => b.conf - a.conf);
+    const seen = new Set();
+    const ideas = [...signalIdeas, ...ranked].filter((idea) => {
+      if (!idea.sym || seen.has(idea.sym)) return false;
+      seen.add(idea.sym);
+      return true;
+    }).slice(0, 36);
+    M.TRADE_IDEAS.splice(0, M.TRADE_IDEAS.length, ...ideas);
+  }
+
 })();
