@@ -59,4 +59,200 @@
     lastStatus: "BOOT",
   };
 
+  function notify() {
+    state.liveVersion += 1;
+    for (const listener of state.listeners) {
+      try { listener(state.liveVersion); } catch (_) {}
+    }
+  }
+
+  async function api(path) {
+    const response = await fetch(path, { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok || payload.error) throw new Error(payload.detail || payload.error || path);
+    return payload;
+  }
+
+  async function postApi(path, body) {
+    const response = await fetch(path, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.error) throw new Error(payload.detail || payload.error || path);
+    return payload;
+  }
+
+  function rng(symbol, salt) {
+    const raw = Math.sin((M.hash(symbol + ":" + salt) || 1) * 12.9898) * 43758.5453;
+    return raw - Math.floor(raw);
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function ensureTicker(symbol) {
+    const sym = String(symbol || "SPY").toUpperCase().replace("/", ".");
+    const meta = [...state.marketUniverse, ...state.universe].find((item) => item.symbol === sym) || {};
+    if (M.BY_SYM[sym]) {
+      if (meta.name && M.BY_SYM[sym].name === sym) M.BY_SYM[sym].name = meta.name;
+      if (meta.exchange) M.BY_SYM[sym].industry = meta.exchange;
+      if (meta.market) M.BY_SYM[sym].market = meta.market;
+      if (meta.currency) M.BY_SYM[sym].currency = meta.currency;
+      return M.BY_SYM[sym];
+    }
+
+    const base = M.BY_SYM.SPY || M.TICKERS[0];
+    const market = meta.market || state.market || "US";
+    const price = market === "JAPAN" ? 800 + rng(sym, 1) * 9000 : market === "HONGKONG" ? 20 + rng(sym, 1) * 420 : 40 + rng(sym, 1) * 460;
+    const clone = {
+      ...base,
+      sym,
+      name: meta.name || sym,
+      sector: meta.assetType === "ETF" ? "ETF" : market,
+      industry: meta.exchange || "Listed",
+      market,
+      currency: meta.currency || MARKET_CONFIG[market]?.currency || "USD",
+      price,
+      prevClose: price,
+      pctChg: 0,
+      dayHigh: price * 1.01,
+      dayLow: price * 0.99,
+      yHigh: price * 1.18,
+      yLow: price * 0.82,
+      volume: 0,
+      avgVol: 0,
+      mcap: 0,
+      pe: 0,
+      fwdPe: 0,
+      pb: 0,
+      peg: 0,
+      div: 0,
+      beta: +(0.65 + rng(sym, 2) * 1.4).toFixed(2),
+      shortPct: +(rng(sym, 3) * 12).toFixed(2),
+      dtc: +(0.5 + rng(sym, 4) * 5).toFixed(2),
+      eps: 0,
+      factors: {
+        value: Math.round(25 + rng(sym, 5) * 65),
+        momentum: 50,
+        quality: Math.round(25 + rng(sym, 6) * 65),
+        lowVol: Math.round(25 + rng(sym, 7) * 65),
+        growth: Math.round(25 + rng(sym, 8) * 65),
+        size: Math.round(35 + rng(sym, 9) * 60),
+      },
+      composite: 50,
+      history: cloneHistory(base.history || [], price),
+      bids: [],
+      asks: [],
+    };
+    buildBook(clone);
+    M.BY_SYM[sym] = clone;
+    if (!M.TICKERS.some((ticker) => ticker.sym === sym)) M.TICKERS.unshift(clone);
+    rebuildSearchTickers();
+    return clone;
+  }
+
+  function cloneHistory(source, price) {
+    const rows = (source || []).slice(-252);
+    if (!rows.length) {
+      return Array.from({ length: 120 }, (_, i) => ({ o: price, h: price, l: price, c: price, v: 0 }));
+    }
+    const last = rows[rows.length - 1].c || price;
+    const scale = price / last;
+    return rows.map((row) => ({
+      o: row.o * scale,
+      h: row.h * scale,
+      l: row.l * scale,
+      c: row.c * scale,
+      v: row.v,
+    }));
+  }
+
+  function applyQuote(quote) {
+    const t = ensureTicker(quote.symbol);
+    const previous = quote.change != null && quote.close != null ? quote.close - quote.change : t.prevClose;
+    t.price = numberOr(quote.close, t.price);
+    t.prevClose = numberOr(previous, t.prevClose || t.price);
+    t.pctChg = numberOr(quote.changePct, t.pctChg);
+    t.dayHigh = numberOr(quote.high, t.dayHigh);
+    t.dayLow = numberOr(quote.low, t.dayLow);
+    t.volume = numberOr(quote.volume, t.volume);
+    t.avgVol = t.avgVol ? Math.round((t.avgVol * 0.85) + (t.volume * 0.15)) : t.volume;
+    t.beta = +(0.55 + rng(t.sym, 20) * 1.8).toFixed(2);
+    t.eps = t.pe ? +(t.price / t.pe).toFixed(2) : t.eps;
+    updateFactors(t);
+    buildBook(t);
+    return t;
+  }
+
+  function numberOr(value, fallback) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function updateFactors(t) {
+    const momentum = clamp(50 + t.pctChg * 8 + rng(t.sym, 30) * 16 - 8, 1, 99);
+    const liquidity = clamp(Math.log10(Math.max(t.volume || 1, 1)) * 10, 1, 99);
+    const lowVol = clamp(95 - Math.abs(t.pctChg || 0) * 9 + rng(t.sym, 31) * 10, 1, 99);
+    t.factors = {
+      ...t.factors,
+      momentum: Math.round(momentum),
+      lowVol: Math.round(lowVol),
+      size: Math.round(liquidity),
+    };
+    t.composite = Math.round(Object.values(t.factors).reduce((sum, value) => sum + value, 0) / 6);
+  }
+
+  function buildBook(t) {
+    const tick = t.price < 50 ? 0.01 : t.price < 500 ? 0.05 : 0.10;
+    const bids = [];
+    const asks = [];
+    for (let i = 0; i < 15; i += 1) {
+      const sizeBase = Math.max(100, Math.round((t.volume || 800000) / 8000));
+      bids.push({ p: +(t.price - tick * (i + 1) - rng(t.sym, i + 40) * tick).toFixed(2), sz: Math.round(sizeBase * (0.35 + rng(t.sym, i + 60) * 3)) * 100 });
+      asks.push({ p: +(t.price + tick * (i + 1) + rng(t.sym, i + 80) * tick).toFixed(2), sz: Math.round(sizeBase * (0.35 + rng(t.sym, i + 100) * 3)) * 100 });
+    }
+    t.bids = bids;
+    t.asks = asks;
+  }
+
+  function applyHistory(symbol, items, rangeName, interval) {
+    const t = ensureTicker(symbol);
+    const rows = (items || []).filter((row) => Number.isFinite(row.close)).map((row) => ({
+      o: numberOr(row.open, row.close),
+      h: numberOr(row.high, row.close),
+      l: numberOr(row.low, row.close),
+      c: numberOr(row.close, t.price),
+      v: numberOr(row.volume, 0),
+      date: row.date,
+      time: row.time,
+      datetime: row.datetime,
+    }));
+    if (rows.length) {
+      t.history = rows;
+      t.historyRange = String(rangeName || "").toUpperCase();
+      t.historyInterval = interval || "";
+      t.historyByRange = { ...(t.historyByRange || {}), [t.historyRange]: rows };
+      if (t.historyRange === "1Y" || rows.length >= 200) t.longHistory = rows;
+      const highs = rows.map((row) => row.h);
+      const lows = rows.map((row) => row.l);
+      t.yHigh = Math.max(...highs);
+      t.yLow = Math.min(...lows);
+      t.price = rows[rows.length - 1].c;
+      if (rows.length > 2) {
+        t.prevClose = rows[rows.length - 2].c;
+        t.pctChg = ((t.price - t.prevClose) / t.prevClose) * 100;
+      }
+      t.dayHigh = rows[rows.length - 1].h;
+      t.dayLow = rows[rows.length - 1].l;
+      t.volume = rows[rows.length - 1].v;
+      t.avgVol = Math.round(rows.slice(-21).reduce((sum, row) => sum + row.v, 0) / Math.max(1, Math.min(21, rows.length)));
+      updateFactors(t);
+      buildBook(t);
+    }
+  }
+
 })();
