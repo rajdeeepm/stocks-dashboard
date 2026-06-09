@@ -64,6 +64,21 @@ CORE_SIGNAL_SYMBOLS = [
     "CVX", "LLY", "JNJ", "UNH", "PG", "KO", "WMT", "CAT", "BA", "DIS",
 ]
 
+PROVIDERS = {
+    "nasdaq-universe": {"type": "universe", "source": NASDAQ_LISTED},
+    "nse-universe": {"type": "universe", "source": NSE_EQUITY_LIST},
+    "jpx-universe": {"type": "universe", "source": JPX_LISTED},
+    "asx-universe": {"type": "universe", "source": ASX_LISTED},
+    "hkex-universe": {"type": "universe", "source": HKEX_SECURITIES},
+    "lse-aim-universe": {"type": "universe", "source": LSE_AIM_INSTRUMENTS},
+    "xetra-universe": {"type": "universe", "source": XETRA_INSTRUMENTS},
+    "tsx-universe": {"type": "universe", "source": TSX_DIRECTORY},
+    "yahoo-chart": {"type": "quote/history", "source": YAHOO_CHART},
+    "google-news-rss": {"type": "news", "source": GOOGLE_NEWS_RSS},
+    "sqlite-research": {"type": "persistence", "source": str(DB_PATH)},
+}
+
+
 FALLBACK_UNIVERSE = [
     {"symbol": "AAPL", "name": "Apple Inc.", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
     {"symbol": "MSFT", "name": "Microsoft Corporation", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
@@ -309,6 +324,41 @@ def init_research_db() -> None:
                 """,
                 (name, meta["type"], meta["source"], "BOOT", None, now_iso(), "provider registered"),
             )
+
+
+def record_provider(name: str, status: str, latency_ms: int | None = None, detail: str | None = None) -> None:
+    meta = PROVIDERS.get(name, {"type": "unknown", "source": name})
+    try:
+        init_research_db()
+        with db() as conn:
+            conn.execute(
+                """
+                INSERT INTO provider_status
+                (name, provider_type, source, status, latency_ms, updated_at, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                  status=excluded.status,
+                  latency_ms=excluded.latency_ms,
+                  updated_at=excluded.updated_at,
+                  detail=excluded.detail
+                """,
+                (name, meta["type"], meta["source"], status, latency_ms, now_iso(), detail),
+            )
+    except sqlite3.Error:
+        pass
+
+
+def provider_status_payload() -> dict[str, Any]:
+    init_research_db()
+    with db() as conn:
+        rows = [dict(row) for row in conn.execute("SELECT * FROM provider_status ORDER BY name")]
+    ok = sum(1 for row in rows if row["status"] in {"OK", "BOOT"})
+    return {
+        "source": "sqlite-research",
+        "updatedAt": now_iso(),
+        "summary": {"ok": ok, "total": len(rows), "degraded": len(rows) - ok},
+        "items": rows,
+    }
 
 
 def cached(key: str, loader, ttl: int):
@@ -1196,6 +1246,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 key = f"news:{query}:{limit}"
                 data = cached(key, lambda: load_news(query, limit), CACHE_TTL["news"])
                 self.write_json(data)
+            elif parsed.path == "/api/providers/status":
+                self.write_json(provider_status_payload())
             else:
                 self.write_json({"error": "Unknown endpoint"}, status=404)
         except urllib.error.URLError as exc:
