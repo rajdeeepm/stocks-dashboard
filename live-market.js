@@ -493,4 +493,117 @@
     return cfg.defaultSymbol;
   }
 
+  async function switchMarket(marketId) {
+    const firstSymbol = applyMarket(marketId);
+    await loadUniverse();
+    const cfg = MARKET_CONFIG[state.market] || MARKET_CONFIG.US;
+    M.MARKET_TICKERS = cfg.symbols.map((symbol) => ensureTicker(symbol));
+    rebuildSearchTickers();
+    await refreshAll(firstSymbol);
+    notify();
+    return firstSymbol;
+  }
+
+  async function refreshSymbol(symbol) {
+    const sym = String(symbol || "NVDA").toUpperCase();
+    ensureTicker(sym);
+    await Promise.allSettled([
+      refreshQuotes([sym]),
+      refreshHistory(sym, "1y"),
+      refreshNews(sym),
+    ]);
+    notify();
+  }
+
+  async function refreshSymbolRange(symbol, range) {
+    const sym = String(symbol || "NVDA").toUpperCase();
+    ensureTicker(sym);
+    await Promise.allSettled([
+      refreshQuotes([sym]),
+      refreshHistory(sym, String(range || "1y").toLowerCase()),
+    ]);
+    notify();
+  }
+
+  async function placePaperOrder(symbol, side, qty) {
+    const payload = await postApi("/api/paper/order", { symbol, side, qty, orderType: "MARKET" });
+    await refreshResearchLayer(symbol);
+    return payload;
+  }
+
+  async function refreshResearchLayer(symbol) {
+    const sym = String(symbol || "NVDA").toUpperCase();
+    const settled = await Promise.allSettled([
+      api("/api/providers/status"),
+      api("/api/signals/latest?limit=50"),
+      api(`/api/research/summary?symbol=${encodeURIComponent(sym)}`),
+      postApi("/api/backtest/run", { symbols: CORE_SYMBOLS.slice(0, 6), lookbackDays: 90 }),
+      api("/api/portfolio"),
+      api("/api/paper/journal?limit=12"),
+      api("/api/alerts?limit=12"),
+      api("/api/alerts/rules"),
+      api("/api/portfolio/ranking?limit=36"),
+    ]);
+    const [providers, signals, summary, backtest, portfolio, journal, alerts, rules, ranking] = settled.map((item) => item.status === "fulfilled" ? item.value : null);
+    if (providers) state.providers = providers.items || [];
+    if (signals) state.signals = signals.items || [];
+    if (summary) state.researchSummary = summary;
+    if (backtest) state.backtest = backtest;
+    if (portfolio) state.portfolio = portfolio;
+    if (journal) state.paperJournal = journal.items || [];
+    if (alerts) state.alerts = alerts.items || [];
+    if (rules) state.alertRules = rules.items || [];
+    if (ranking) state.portfolioRanking = ranking.items || [];
+    updateTradeIdeas();
+    M.RESEARCH = {
+      providers: state.providers,
+      signals: state.signals,
+      summary: state.researchSummary,
+      backtest: state.backtest,
+      portfolio: state.portfolio,
+      paperJournal: state.paperJournal,
+      alerts: state.alerts,
+      alertRules: state.alertRules,
+      portfolioRanking: state.portfolioRanking,
+      placePaperOrder,
+      refresh: refreshResearchLayer,
+    };
+    notify();
+  }
+
+  async function refreshAll(initialSymbol) {
+    if (state.refreshing) return;
+    state.refreshing = true;
+    try {
+      const symbols = currentMarketSymbols();
+      await Promise.allSettled([
+        loadUniverse(),
+        refreshQuotes(symbols),
+        refreshNews(`${state.market} market`),
+        api(`/api/sectors/map?market=${encodeURIComponent(state.market)}`).then((payload) => { state.sectorMap = payload.items || []; }),
+      ]);
+      await refreshSymbol(initialSymbol || "NVDA");
+      await refreshResearchLayer(initialSymbol || "NVDA");
+      state.lastStatus = "LIVE";
+    } finally {
+      state.refreshing = false;
+      notify();
+    }
+  }
+
+  function liveInit({ initialSym, initialMarket, onUpdate } = {}) {
+    if (onUpdate) state.listeners.add(onUpdate);
+    if (!state.initialized) {
+      state.initialized = true;
+      loadMarkets().then(() => notify());
+      applyMarket(initialMarket || state.market || "US");
+      rebuildSearchTickers();
+      refreshAll(initialSym || MARKET_CONFIG[state.market].defaultSymbol || "NVDA");
+      setInterval(() => refreshAll(MARKET_CONFIG[state.market].defaultSymbol || "NVDA"), 60000);
+    }
+    return () => {
+      if (onUpdate) state.listeners.delete(onUpdate);
+    };
+  }
+
 })();
