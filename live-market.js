@@ -420,4 +420,77 @@
     updateDerived();
   }
 
+  function updateDerived() {
+    updateIndices();
+    updateSectors();
+    updatePortfolio();
+    updateTradeIdeas();
+    rebuildSearchTickers();
+  }
+
+  function rebuildSearchTickers() {
+    const active = M.MARKET_TICKERS || M.TICKERS;
+    const existing = new Map(active.map((ticker) => [ticker.sym, ticker]));
+    const sourceUniverse = [...state.marketUniverse, ...state.universe];
+    const seen = new Set(active.map((ticker) => ticker.sym));
+    const extra = sourceUniverse.filter((item) => {
+      const symbol = item.symbol;
+      if (!symbol || seen.has(symbol)) return false;
+      seen.add(symbol);
+      return true;
+    }).map((item) => ({
+      sym: item.symbol,
+      name: item.name,
+      price: 0,
+      pctChg: 0,
+      sector: item.assetType || "Listed",
+      market: item.market || state.market,
+    }));
+    M.SEARCH_TICKERS = [...active, ...extra];
+  }
+
+  async function loadUniverse() {
+    if (state.market === "US") {
+      const payload = await api("/api/universe");
+      state.universe = payload.items || [];
+    }
+    const marketPayload = await api(`/api/market/universe?market=${encodeURIComponent(state.market)}`);
+    state.marketUniverse = marketPayload.items || [];
+    state.markets = state.markets.map((market) => market.id === state.market
+      ? { ...market, count: marketPayload.count || market.count, source: marketPayload.source, fallback: marketPayload.fallback }
+      : market);
+    M.MARKETS = state.markets;
+    M.MARKET_META = { ...(M.MARKET_META || {}), count: marketPayload.count, source: marketPayload.source, fallback: marketPayload.fallback };
+    rebuildSearchTickers();
+  }
+
+  async function loadMarkets() {
+    try {
+      const payload = await api("/api/markets");
+      if (Array.isArray(payload.items) && payload.items.length) {
+        state.markets = payload.items;
+        M.MARKETS = state.markets;
+      }
+    } catch (_) {}
+  }
+
+  function currentMarketSymbols() {
+    const cfg = MARKET_CONFIG[state.market] || MARKET_CONFIG.US;
+    const indexSymbols = (cfg.indices || []).map((item) => item[1]);
+    return [...new Set([...cfg.symbols, ...indexSymbols])];
+  }
+
+  function applyMarket(marketId) {
+    const next = MARKET_CONFIG[marketId] ? marketId : "US";
+    state.market = next;
+    const cfg = MARKET_CONFIG[next];
+    M.CURRENT_MARKET = next;
+    M.MARKETS = state.markets;
+    M.MARKET_META = { id: next, name: cfg.name, currency: cfg.currency };
+    M.MARKET_TICKERS = cfg.symbols.map((symbol) => ensureTicker(symbol));
+    rebuildSearchTickers();
+    updateDerived();
+    return cfg.defaultSymbol;
+  }
+
 })();
