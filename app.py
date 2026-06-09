@@ -57,6 +57,13 @@ class CacheEntry:
 
 
 cache: dict[str, CacheEntry] = {}
+
+CORE_SIGNAL_SYMBOLS = [
+    "NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "AMD", "ORCL",
+    "CRM", "ADBE", "NFLX", "JPM", "BAC", "GS", "MS", "BLK", "V", "XOM",
+    "CVX", "LLY", "JNJ", "UNH", "PG", "KO", "WMT", "CAT", "BA", "DIS",
+]
+
 FALLBACK_UNIVERSE = [
     {"symbol": "AAPL", "name": "Apple Inc.", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
     {"symbol": "MSFT", "name": "Microsoft Corporation", "exchange": "NASDAQ", "assetType": "Stock", "etf": False},
@@ -210,6 +217,98 @@ MARKET_UNIVERSES = {
         ],
     },
 }
+
+
+def now_iso() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def week_key(value: date | None = None) -> str:
+    year, week, _ = (value or date.today()).isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_research_db() -> None:
+    with db() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS provider_status (
+              name TEXT PRIMARY KEY,
+              provider_type TEXT NOT NULL,
+              source TEXT NOT NULL,
+              status TEXT NOT NULL,
+              latency_ms INTEGER,
+              updated_at TEXT NOT NULL,
+              detail TEXT
+            );
+            CREATE TABLE IF NOT EXISTS signal_runs (
+              run_id TEXT PRIMARY KEY,
+              created_at TEXT NOT NULL,
+              week TEXT NOT NULL,
+              universe_count INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              notes TEXT
+            );
+            CREATE TABLE IF NOT EXISTS signals (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id TEXT NOT NULL,
+              symbol TEXT NOT NULL,
+              name TEXT NOT NULL,
+              action TEXT NOT NULL,
+              score REAL NOT NULL,
+              confidence REAL NOT NULL,
+              price REAL,
+              factors_json TEXT NOT NULL,
+              reasons_json TEXT NOT NULL,
+              risks_json TEXT NOT NULL,
+              freshness_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(run_id) REFERENCES signal_runs(run_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_signals_symbol_created ON signals(symbol, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_signals_run_score ON signals(run_id, score DESC);
+            CREATE TABLE IF NOT EXISTS paper_orders (
+              order_id TEXT PRIMARY KEY,
+              created_at TEXT NOT NULL,
+              symbol TEXT NOT NULL,
+              side TEXT NOT NULL,
+              qty INTEGER NOT NULL,
+              order_type TEXT NOT NULL,
+              limit_price REAL,
+              status TEXT NOT NULL,
+              reason TEXT,
+              fill_price REAL,
+              notional REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_paper_orders_created ON paper_orders(created_at DESC);
+            CREATE TABLE IF NOT EXISTS alert_rules (
+              rule_id TEXT PRIMARY KEY,
+              created_at TEXT NOT NULL,
+              symbol TEXT NOT NULL,
+              rule_type TEXT NOT NULL,
+              threshold REAL,
+              severity TEXT NOT NULL,
+              status TEXT NOT NULL,
+              note TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_alert_rules_symbol ON alert_rules(symbol, status);
+            """
+        )
+        for name, meta in PROVIDERS.items():
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO provider_status
+                (name, provider_type, source, status, latency_ms, updated_at, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (name, meta["type"], meta["source"], "BOOT", None, now_iso(), "provider registered"),
+            )
 
 
 def cached(key: str, loader, ttl: int):
