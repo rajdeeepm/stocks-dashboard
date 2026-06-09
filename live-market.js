@@ -606,4 +606,41 @@
     };
   }
 
+  const fallbackNewsFor = M.newsFor;
+  M.newsFor = function newsFor(symbol) {
+    const sym = String(symbol || "market").toUpperCase();
+    return state.liveNews[sym] || state.liveNews.MARKET || fallbackNewsFor(symbol);
+  };
+  M.newsForTopic = function newsForTopic(symbol, tab) {
+    const sym = String(symbol || "market").toUpperCase();
+    return state.liveNews[newsTopicKey(sym, tab)]
+      || state.liveNews[sym]
+      || state.liveNews[`${state.market}:MKT`]
+      || fallbackNewsFor(symbol);
+  };
+
+  M.ensureTicker = ensureTicker;
+  M.refreshSymbol = refreshSymbol;
+  M.refreshSymbolRange = refreshSymbolRange;
+  M.switchMarket = switchMarket;
+  M.liveInit = liveInit;
+  M.liveState = state;
+  M.MARKETS = state.markets;
+  M.CURRENT_MARKET = state.market;
+  M.MARKET_META = { id: state.market, name: MARKET_CONFIG[state.market].name, currency: MARKET_CONFIG[state.market].currency };
+  M.MARKET_TICKERS = MARKET_CONFIG.US.symbols.map((symbol) => ensureTicker(symbol));
+  M.RESEARCH = {
+    providers: state.providers,
+    signals: state.signals,
+    summary: state.researchSummary,
+    backtest: state.backtest,
+    portfolio: state.portfolio,
+    paperJournal: state.paperJournal,
+    alerts: state.alerts,
+    alertRules: state.alertRules,
+    portfolioRanking: state.portfolioRanking,
+    placePaperOrder,
+    refresh: refreshResearchLayer,
+  };
+  rebuildSearchTickers();
 })();
