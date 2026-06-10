@@ -1424,6 +1424,55 @@ def run_weekly_signals(limit: int = 30, symbols: list[str] | None = None) -> dic
     return payload
 
 
+def latest_signals(limit: int = 20) -> dict[str, Any]:
+    init_research_db()
+    with db() as conn:
+        row = conn.execute("SELECT * FROM signal_runs ORDER BY created_at DESC LIMIT 1").fetchone()
+    if not row:
+        return run_weekly_signals(limit=min(limit, 18))
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM signals WHERE run_id = ? ORDER BY score DESC, confidence DESC LIMIT ?",
+            (row["run_id"], limit),
+        ).fetchall()
+    return {
+        "source": "sqlite-research",
+        "runId": row["run_id"],
+        "createdAt": row["created_at"],
+        "week": row["week"],
+        "count": len(rows),
+        "items": [decode_signal_row(item) for item in rows],
+    }
+
+
+def decode_signal_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "symbol": row["symbol"],
+        "name": row["name"],
+        "action": row["action"],
+        "score": row["score"],
+        "confidence": row["confidence"],
+        "price": row["price"],
+        "factors": json.loads(row["factors_json"] or "{}"),
+        "reasons": json.loads(row["reasons_json"] or "[]"),
+        "risks": json.loads(row["risks_json"] or "[]"),
+        "freshness": json.loads(row["freshness_json"] or "{}"),
+        "createdAt": row["created_at"],
+        "runId": row["run_id"],
+    }
+
+
+def signal_history(symbol: str, limit: int = 20) -> dict[str, Any]:
+    init_research_db()
+    sym = clean_symbol(symbol)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM signals WHERE symbol = ? ORDER BY created_at DESC LIMIT ?",
+            (sym, max(1, min(100, limit))),
+        ).fetchall()
+    return {"source": "sqlite-research", "symbol": sym, "items": [decode_signal_row(row) for row in rows]}
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -1479,6 +1528,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.write_json(data)
             elif parsed.path == "/api/providers/status":
                 self.write_json(provider_status_payload())
+            elif parsed.path == "/api/signals/latest":
+                limit = max(1, min(80, int(params.get("limit", ["20"])[0])))
+                self.write_json(latest_signals(limit))
+            elif parsed.path == "/api/signals/history":
+                symbol = params.get("symbol", ["NVDA"])[0]
+                limit = max(1, min(100, int(params.get("limit", ["20"])[0])))
+                self.write_json(signal_history(symbol, limit))
             elif parsed.path == "/api/signals/run" and self.command == "POST":
                 payload = self.read_json_body()
                 symbols = payload.get("symbols")
