@@ -1362,6 +1362,68 @@ def compute_signal(meta: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def insert_signal_run(signals: list[dict[str, Any]]) -> dict[str, Any]:
+    init_research_db()
+    run_id = f"SIG-{week_key()}-{uuid.uuid4().hex[:8].upper()}"
+    created_at = now_iso()
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO signal_runs(run_id, created_at, week, universe_count, status, notes) VALUES (?, ?, ?, ?, ?, ?)",
+            (run_id, created_at, week_key(), len(signals), "OK", "deterministic weekly swing model; free public data"),
+        )
+        for signal in signals:
+            conn.execute(
+                """
+                INSERT INTO signals
+                (run_id, symbol, name, action, score, confidence, price, factors_json, reasons_json, risks_json, freshness_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    signal["symbol"],
+                    signal["name"],
+                    signal["action"],
+                    signal["score"],
+                    signal["confidence"],
+                    signal["price"],
+                    json.dumps(signal["factors"]),
+                    json.dumps(signal["reasons"]),
+                    json.dumps(signal["risks"]),
+                    json.dumps(signal["freshness"]),
+                    created_at,
+                ),
+            )
+    record_provider("sqlite-research", "OK", None, f"stored signal run {run_id}")
+    return {"runId": run_id, "createdAt": created_at, "week": week_key(), "items": signals}
+
+
+def run_weekly_signals(limit: int = 30, symbols: list[str] | None = None) -> dict[str, Any]:
+    raw = []
+    for meta in signal_universe(limit=limit, symbols=symbols):
+        try:
+            raw.append(compute_signal(meta))
+        except Exception as exc:
+            raw.append(
+                {
+                    "symbol": clean_symbol(meta.get("symbol", "")),
+                    "name": meta.get("name") or meta.get("symbol", ""),
+                    "action": "DATA_GAP",
+                    "score": 0,
+                    "confidence": 0,
+                    "price": None,
+                    "factors": {},
+                    "reasons": ["Signal generation failed for this symbol"],
+                    "risks": [str(exc)],
+                    "freshness": {"generatedAt": now_iso(), "modeledFields": [], "error": str(exc)},
+                }
+            )
+    ranked = sorted(raw, key=lambda item: (item["score"], item["confidence"]), reverse=True)
+    payload = insert_signal_run(ranked)
+    payload["source"] = "sqlite-research"
+    payload["count"] = len(ranked)
+    return payload
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -1378,6 +1440,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/":
             self.path = "/Phosphor.html"
         super().do_GET()
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self.handle_api(parsed)
+            return
+        self.write_json({"error": "Unknown endpoint"}, status=404)
 
     def handle_api(self, parsed: urllib.parse.ParseResult):
         try:
@@ -1410,6 +1479,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.write_json(data)
             elif parsed.path == "/api/providers/status":
                 self.write_json(provider_status_payload())
+            elif parsed.path == "/api/signals/run" and self.command == "POST":
+                payload = self.read_json_body()
+                symbols = payload.get("symbols")
+                if isinstance(symbols, str):
+                    symbols = symbols.split(",")
+                if symbols is not None and not isinstance(symbols, list):
+                    symbols = None
+                limit = max(1, min(120, int(payload.get("limit", 30))))
+                self.write_json(run_weekly_signals(limit=limit, symbols=symbols))
             else:
                 self.write_json({"error": "Unknown endpoint"}, status=404)
         except urllib.error.URLError as exc:
@@ -1418,6 +1496,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             self.write_json({"error": "Request failed", "detail": str(exc)}, status=500)
 
+    def read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     def write_json(self, payload: Any, status: int = 200):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
