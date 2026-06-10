@@ -1200,6 +1200,168 @@ def score_headline(title: str) -> int:
     return sum(1 for word in words if word in POSITIVE_WORDS) - sum(1 for word in words if word in NEGATIVE_WORDS)
 
 
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def pct_change(values: list[float], lookback: int) -> float:
+    if len(values) <= lookback or values[-lookback - 1] == 0:
+        return 0.0
+    return ((values[-1] - values[-lookback - 1]) / values[-lookback - 1]) * 100
+
+
+def average(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def stddev(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mu = average(values)
+    return math.sqrt(sum((value - mu) ** 2 for value in values) / (len(values) - 1))
+
+
+def rsi_score(closes: list[float], period: int = 14) -> float:
+    if len(closes) <= period:
+        return 50.0
+    gains = []
+    losses = []
+    for prev, cur in zip(closes[-period - 1:-1], closes[-period:]):
+        change = cur - prev
+        gains.append(max(0.0, change))
+        losses.append(max(0.0, -change))
+    avg_loss = average(losses)
+    if avg_loss == 0:
+        return 100.0
+    rs = average(gains) / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def deterministic_value(symbol: str, salt: str, low: float, high: float) -> float:
+    raw = hashlib.sha256(f"{symbol}:{salt}".encode("utf-8")).hexdigest()[:12]
+    value = int(raw, 16) / float(0xFFFFFFFFFFFF)
+    return low + (high - low) * value
+
+
+def universe_name_map() -> dict[str, dict[str, Any]]:
+    payload = cached("universe", load_universe, CACHE_TTL["universe"])
+    return {item["symbol"]: item for item in payload.get("items", [])}
+
+
+def signal_universe(limit: int = 30, symbols: list[str] | None = None) -> list[dict[str, Any]]:
+    metadata = universe_name_map()
+    selected = [clean_symbol(symbol) for symbol in (symbols or CORE_SIGNAL_SYMBOLS)]
+    out = []
+    for symbol in selected:
+        meta = metadata.get(symbol, {"symbol": symbol, "name": symbol, "assetType": "Stock", "exchange": "Listed"})
+        out.append(meta)
+    return out[: max(1, min(120, limit))]
+
+
+def compute_signal(meta: dict[str, Any]) -> dict[str, Any]:
+    symbol = clean_symbol(meta.get("symbol", "SPY"))
+    name = meta.get("name") or symbol
+    quote = load_quote(symbol) or {}
+    history_payload = load_history(symbol, "1y")
+    news_payload = load_news(f"{symbol} stock", 8)
+    history = history_payload.get("items", [])
+    closes = [float(row["close"]) for row in history if row.get("close") is not None]
+    volumes = [float(row["volume"]) for row in history if row.get("volume") is not None]
+    price = quote.get("close") or (closes[-1] if closes else None)
+
+    returns = [
+        (cur - prev) / prev
+        for prev, cur in zip(closes[:-1], closes[1:])
+        if prev
+    ]
+    vol_annual = stddev(returns[-63:]) * math.sqrt(252) if returns else 0
+    high_252 = max(closes) if closes else price or 0
+    drawdown = ((price or high_252) / high_252 - 1) * 100 if high_252 else 0
+    sma20 = average(closes[-20:])
+    sma50 = average(closes[-50:])
+    sma200 = average(closes[-200:])
+    trend_raw = 0.0
+    if price and sma50:
+        trend_raw += ((price - sma50) / sma50) * 100
+    if price and sma200:
+        trend_raw += ((price - sma200) / sma200) * 60
+    momentum_1m = pct_change(closes, 21)
+    momentum_3m = pct_change(closes, 63)
+    volume_pulse = (volumes[-1] / average(volumes[-21:])) if len(volumes) >= 21 and average(volumes[-21:]) else 1.0
+    rsi = rsi_score(closes)
+    news_score = average([float(item.get("sentiment", 0)) for item in news_payload.get("items", [])])
+
+    factors = {
+        "trend": round(clamp(50 + trend_raw * 1.8, 0, 100), 1),
+        "momentum": round(clamp(50 + momentum_1m * 2.2 + momentum_3m * 0.8, 0, 100), 1),
+        "quality": round(clamp(55 + deterministic_value(symbol, "quality", -18, 22) + min(12, max(-12, news_score * 4)), 0, 100), 1),
+        "risk": round(clamp(92 - vol_annual * 100 - abs(drawdown) * 0.7, 0, 100), 1),
+        "liquidity": round(clamp(math.log10(max(average(volumes[-21:]) if volumes else 1, 1)) * 10, 0, 100), 1),
+        "sentiment": round(clamp(50 + news_score * 12, 0, 100), 1),
+    }
+    score = round(
+        factors["trend"] * 0.24
+        + factors["momentum"] * 0.22
+        + factors["quality"] * 0.17
+        + factors["risk"] * 0.15
+        + factors["liquidity"] * 0.12
+        + factors["sentiment"] * 0.10,
+        1,
+    )
+    data_quality = min(1.0, len(closes) / 220)
+    confidence = round(clamp(42 + abs(score - 50) * 0.75 + data_quality * 18 - (8 if vol_annual > 0.65 else 0), 0, 99), 1)
+
+    if vol_annual > 0.85 or drawdown < -45:
+        action = "RISK_OFF"
+    elif score >= 68:
+        action = "LONG_CANDIDATE"
+    elif score >= 55:
+        action = "WATCH"
+    elif score <= 38:
+        action = "AVOID"
+    else:
+        action = "MONITOR"
+
+    reasons = [
+        f"Trend factor {factors['trend']:.1f} with price {'above' if price and sma50 and price >= sma50 else 'below'} 50D average",
+        f"1M momentum {momentum_1m:+.1f}% and 3M momentum {momentum_3m:+.1f}%",
+        f"News tone {news_score:+.2f} across {len(news_payload.get('items', []))} Google News headlines",
+    ]
+    risks = []
+    if len(closes) < 120:
+        risks.append("Limited history sample; confidence reduced")
+    if vol_annual > 0.55:
+        risks.append(f"Elevated annualized volatility {vol_annual * 100:.1f}%")
+    if drawdown < -25:
+        risks.append(f"Still in {drawdown:.1f}% drawdown from 1Y high")
+    if volume_pulse > 2.4:
+        risks.append("Volume pulse is unusually high; verify news catalyst")
+    if not risks:
+        risks.append("No major mechanical risk flag in free-data model")
+
+    freshness = {
+        "quoteSource": "yahoo-chart",
+        "quoteDate": quote.get("date"),
+        "quoteTime": quote.get("time"),
+        "historyThrough": history[-1]["date"] if history else None,
+        "newsSource": "google-news-rss",
+        "generatedAt": now_iso(),
+        "modeledFields": ["quality proxy", "risk proxy", "sentiment score"],
+    }
+    return {
+        "symbol": symbol,
+        "name": name,
+        "action": action,
+        "score": score,
+        "confidence": confidence,
+        "price": price,
+        "factors": factors,
+        "reasons": reasons,
+        "risks": risks,
+        "freshness": freshness,
+    }
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
