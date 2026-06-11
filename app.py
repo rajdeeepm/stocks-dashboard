@@ -1850,6 +1850,71 @@ def sector_map_payload(market: str) -> dict[str, Any]:
     return {"source": "market-sector-map", "market": key, "items": rows}
 
 
+def calendar_payload(symbol: str | None = None, market: str = "US") -> dict[str, Any]:
+    sym = clean_symbol(symbol or "")
+    key, _ = market_config(market)
+    base_date = date.today()
+    labels = ["Earnings window", "Ex-dividend watch", "Split/corporate action check", "Analyst revision sweep", "Macro/holiday check"]
+    items = []
+    for i, label in enumerate(labels):
+        items.append({
+            "date": (base_date + timedelta(days=5 + i * 7 + int(deterministic_value(sym or key, label, 0, 4)))).isoformat(),
+            "symbol": sym or "MARKET",
+            "market": key,
+            "type": label,
+            "source": "modeled-calendar",
+            "status": "MODELED",
+        })
+    holidays = [
+        {"date": (base_date + timedelta(days=11)).isoformat(), "market": key, "type": "Exchange holiday check", "source": "calendar-placeholder", "status": "VERIFY"},
+    ]
+    return {"source": "calendar-actions", "items": sorted(items + holidays, key=lambda item: item["date"])}
+
+
+def alert_rules_payload() -> dict[str, Any]:
+    init_research_db()
+    with db() as conn:
+        rows = [dict(row) for row in conn.execute("SELECT * FROM alert_rules ORDER BY created_at DESC LIMIT 100")]
+    return {"source": "sqlite-research", "items": rows}
+
+
+def create_alert_rule(payload: dict[str, Any]) -> dict[str, Any]:
+    init_research_db()
+    symbol = clean_symbol(str(payload.get("symbol", "MARKET")))
+    rule_type = str(payload.get("ruleType", "PRICE_CROSS")).upper()
+    severity = str(payload.get("severity", "WARN")).upper()
+    threshold = payload.get("threshold")
+    threshold_num = to_float(str(threshold)) if threshold not in (None, "") else None
+    rule_id = f"ALR-{uuid.uuid4().hex[:8].upper()}"
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO alert_rules(rule_id, created_at, symbol, rule_type, threshold, severity, status, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (rule_id, now_iso(), symbol, rule_type, threshold_num, severity, "ACTIVE", str(payload.get("note", ""))[:240]),
+        )
+    return {"source": "sqlite-research", "ruleId": rule_id, "status": "ACTIVE"}
+
+
+def alerts_payload(limit: int = 20) -> dict[str, Any]:
+    signals = latest_signals(limit=limit).get("items", [])
+    alerts = []
+    for signal in signals:
+        for risk in signal.get("risks", [])[:2]:
+            alerts.append({"symbol": signal["symbol"], "severity": "WARN", "message": risk, "createdAt": signal["createdAt"]})
+    for rule in alert_rules_payload().get("items", [])[:20]:
+        if rule.get("status") != "ACTIVE":
+            continue
+        alerts.append({
+            "symbol": rule.get("symbol"),
+            "severity": rule.get("severity", "INFO"),
+            "message": f"{rule.get('rule_type')} rule active" + (f" @ {rule.get('threshold')}" if rule.get("threshold") is not None else ""),
+            "createdAt": rule.get("created_at"),
+        })
+    return {"source": "sqlite-research", "items": alerts[:limit]}
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -1920,6 +1985,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             elif parsed.path == "/api/sectors/map":
                 market = params.get("market", ["US"])[0]
                 self.write_json(sector_map_payload(market))
+            elif parsed.path == "/api/calendar":
+                symbol = params.get("symbol", [""])[0]
+                market = params.get("market", ["US"])[0]
+                self.write_json(calendar_payload(symbol=symbol, market=market))
+            elif parsed.path == "/api/alerts/rules":
+                self.write_json(alert_rules_payload())
             elif parsed.path == "/api/signals/latest":
                 limit = max(1, min(80, int(params.get("limit", ["20"])[0])))
                 self.write_json(latest_signals(limit))
@@ -1927,6 +1998,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 symbol = params.get("symbol", ["NVDA"])[0]
                 limit = max(1, min(100, int(params.get("limit", ["20"])[0])))
                 self.write_json(signal_history(symbol, limit))
+            elif parsed.path == "/api/alerts":
+                limit = max(1, min(100, int(params.get("limit", ["20"])[0])))
+                self.write_json(alerts_payload(limit))
             elif parsed.path == "/api/signals/run" and self.command == "POST":
                 payload = self.read_json_body()
                 symbols = payload.get("symbols")
@@ -1945,6 +2019,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     symbols = None
                 lookback = max(21, min(252, int(payload.get("lookbackDays", 126))))
                 self.write_json(strategy_lab_payload(payload.get("strategy", "MOMENTUM"), symbols=symbols, lookback_days=lookback))
+            elif parsed.path == "/api/alerts/rules" and self.command == "POST":
+                self.write_json(create_alert_rule(self.read_json_body()))
             else:
                 self.write_json({"error": "Unknown endpoint"}, status=404)
         except urllib.error.URLError as exc:
