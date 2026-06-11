@@ -1897,6 +1897,147 @@ def create_alert_rule(payload: dict[str, Any]) -> dict[str, Any]:
     return {"source": "sqlite-research", "ruleId": rule_id, "status": "ACTIVE"}
 
 
+def backtest_run(symbols: list[str] | None = None, lookback_days: int = 90) -> dict[str, Any]:
+    picks = [clean_symbol(symbol) for symbol in (symbols or [item["symbol"] for item in latest_signals(8)["items"][:5]])]
+    rows = []
+    curves: list[list[float]] = []
+    for symbol in picks[:10]:
+        history = load_history(symbol, "1y").get("items", [])
+        closes = [float(row["close"]) for row in history if row.get("close") is not None]
+        if len(closes) <= 22:
+            continue
+        window = closes[-min(lookback_days, len(closes) - 1):]
+        start = window[0]
+        end = window[-1]
+        ret = ((end - start) / start) * 100 if start else 0
+        returns = [(cur / prev) - 1 for prev, cur in zip(window[:-1], window[1:]) if prev]
+        equity = [1.0]
+        peak = 1.0
+        max_drawdown = 0.0
+        for day_ret in returns:
+            equity.append(equity[-1] * (1 + day_ret))
+            peak = max(peak, equity[-1])
+            max_drawdown = min(max_drawdown, (equity[-1] / peak - 1) * 100)
+        curves.append(equity)
+        rows.append(
+            {
+                "symbol": symbol,
+                "returnPct": round(ret, 2),
+                "start": round(start, 2),
+                "end": round(end, 2),
+                "maxDrawdownPct": round(max_drawdown, 2),
+                "volatilityPct": round(stddev(returns) * math.sqrt(252) * 100, 1) if returns else 0,
+            }
+        )
+    avg_ret = average([row["returnPct"] for row in rows])
+    win_rate = (sum(1 for row in rows if row["returnPct"] > 0) / len(rows) * 100) if rows else 0
+    longest = max((len(curve) for curve in curves), default=0)
+    equity_curve = []
+    peak = 1.0
+    max_portfolio_drawdown = 0.0
+    if longest:
+        for index in range(longest):
+            values = [curve[min(index, len(curve) - 1)] for curve in curves if curve]
+            equity = average(values)
+            peak = max(peak, equity)
+            drawdown = (equity / peak - 1) * 100
+            max_portfolio_drawdown = min(max_portfolio_drawdown, drawdown)
+            equity_curve.append({"step": index, "equity": round(equity, 4), "drawdownPct": round(drawdown, 2)})
+    turnover = min(100, max(0, len(rows) * 12.5))
+    return {
+        "source": "yahoo-chart",
+        "runId": f"BT-{uuid.uuid4().hex[:8].upper()}",
+        "createdAt": now_iso(),
+        "method": "equal-weight signal basket; historical close-to-close; no intraday fills",
+        "guardrails": ["fixed lookback window", "no lookahead inputs", "no live order execution", "free data may be delayed"],
+        "summary": {
+            "symbols": len(rows),
+            "avgReturnPct": round(avg_ret, 2),
+            "winRatePct": round(win_rate, 1),
+            "maxDrawdownPct": round(max_portfolio_drawdown, 2),
+            "turnoverPct": round(turnover, 1),
+        },
+        "equityCurve": equity_curve,
+        "regime": market_regime(),
+        "items": rows,
+    }
+
+
+def paper_order(payload: dict[str, Any]) -> dict[str, Any]:
+    init_research_db()
+    symbol = clean_symbol(str(payload.get("symbol", "")))
+    side = str(payload.get("side", "BUY")).upper()
+    order_type = str(payload.get("orderType", "MARKET")).upper()
+    qty = int(payload.get("qty", 0) or 0)
+    limit_price = to_float(str(payload.get("limitPrice"))) if payload.get("limitPrice") not in (None, "") else None
+    if not symbol or side not in {"BUY", "SELL"} or order_type not in {"MARKET", "LIMIT"} or qty <= 0:
+        return {"error": "Invalid paper order", "detail": "symbol, BUY/SELL side, MARKET/LIMIT type, and positive qty are required"}
+
+    with db() as conn:
+        duplicate = conn.execute(
+            """
+            SELECT order_id FROM paper_orders
+            WHERE symbol = ? AND side = ? AND qty = ? AND created_at > ?
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (symbol, side, qty, (datetime.utcnow() - timedelta(seconds=30)).replace(microsecond=0).isoformat() + "Z"),
+        ).fetchone()
+    if duplicate:
+        return {"error": "Duplicate paper order blocked", "detail": f"Recent matching order {duplicate['order_id']} exists"}
+
+    quote = load_quote(symbol) or {}
+    fill_price = quote.get("close")
+    status = "FILLED" if order_type == "MARKET" else "WORKING"
+    reason = "market paper fill from latest Yahoo quote" if status == "FILLED" else "limit paper order staged; no live routing"
+    if order_type == "LIMIT" and fill_price and limit_price:
+        crosses = (side == "BUY" and limit_price >= fill_price) or (side == "SELL" and limit_price <= fill_price)
+        if crosses:
+            status = "FILLED"
+            reason = "limit crossed latest paper quote"
+    if status != "FILLED":
+        fill_price = None
+
+    order_id = f"PPR-{uuid.uuid4().hex[:10].upper()}"
+    notional = (fill_price or limit_price or 0) * qty
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO paper_orders
+            (order_id, created_at, symbol, side, qty, order_type, limit_price, status, reason, fill_price, notional)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (order_id, now_iso(), symbol, side, qty, order_type, limit_price, status, reason, fill_price, notional),
+        )
+    return {"source": "sqlite-research", "orderId": order_id, "symbol": symbol, "side": side, "qty": qty, "status": status, "fillPrice": fill_price, "reason": reason}
+
+
+def paper_journal(limit: int = 40) -> dict[str, Any]:
+    init_research_db()
+    with db() as conn:
+        rows = [dict(row) for row in conn.execute("SELECT * FROM paper_orders ORDER BY created_at DESC LIMIT ?", (max(1, min(200, limit)),))]
+    return {"source": "sqlite-research", "items": rows}
+
+
+def portfolio_payload() -> dict[str, Any]:
+    journal = paper_journal(500)["items"]
+    net: dict[str, int] = {}
+    for order in journal:
+        if order["status"] != "FILLED":
+            continue
+        sign = 1 if order["side"] == "BUY" else -1
+        net[order["symbol"]] = net.get(order["symbol"], 0) + sign * int(order["qty"])
+    symbols = [sym for sym, qty in net.items() if qty]
+    quotes = {item["symbol"]: item for item in load_quotes(symbols).get("items", [])} if symbols else {}
+    positions = []
+    for symbol, qty in sorted(net.items()):
+        if not qty:
+            continue
+        quote = quotes.get(symbol, {})
+        last = quote.get("close") or 0
+        positions.append({"symbol": symbol, "qty": qty, "last": last, "marketValue": qty * last, "source": "paper"})
+    return {"source": "sqlite-research", "cash": 100000, "positions": positions, "journalCount": len(journal)}
+
+
 def alerts_payload(limit: int = 20) -> dict[str, Any]:
     signals = latest_signals(limit=limit).get("items", [])
     alerts = []
@@ -1998,6 +2139,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 symbol = params.get("symbol", ["NVDA"])[0]
                 limit = max(1, min(100, int(params.get("limit", ["20"])[0])))
                 self.write_json(signal_history(symbol, limit))
+            elif parsed.path == "/api/portfolio":
+                self.write_json(portfolio_payload())
+            elif parsed.path == "/api/paper/journal":
+                limit = max(1, min(200, int(params.get("limit", ["40"])[0])))
+                self.write_json(paper_journal(limit))
             elif parsed.path == "/api/alerts":
                 limit = max(1, min(100, int(params.get("limit", ["20"])[0])))
                 self.write_json(alerts_payload(limit))
@@ -2010,6 +2156,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     symbols = None
                 limit = max(1, min(120, int(payload.get("limit", 30))))
                 self.write_json(run_weekly_signals(limit=limit, symbols=symbols))
+            elif parsed.path == "/api/backtest/run" and self.command == "POST":
+                payload = self.read_json_body()
+                symbols = payload.get("symbols")
+                if isinstance(symbols, str):
+                    symbols = symbols.split(",")
+                if symbols is not None and not isinstance(symbols, list):
+                    symbols = None
+                lookback = max(21, min(252, int(payload.get("lookbackDays", 90))))
+                self.write_json(backtest_run(symbols=symbols, lookback_days=lookback))
             elif parsed.path == "/api/strategy/run" and self.command == "POST":
                 payload = self.read_json_body()
                 symbols = payload.get("symbols")
@@ -2021,6 +2176,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.write_json(strategy_lab_payload(payload.get("strategy", "MOMENTUM"), symbols=symbols, lookback_days=lookback))
             elif parsed.path == "/api/alerts/rules" and self.command == "POST":
                 self.write_json(create_alert_rule(self.read_json_body()))
+            elif parsed.path == "/api/paper/order" and self.command == "POST":
+                result = paper_order(self.read_json_body())
+                self.write_json(result, status=400 if result.get("error") else 200)
             else:
                 self.write_json({"error": "Unknown endpoint"}, status=404)
         except urllib.error.URLError as exc:
