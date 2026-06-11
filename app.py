@@ -1661,6 +1661,69 @@ def strategy_presets(signal: dict[str, Any], fundamentals: dict[str, Any]) -> li
     return [{"name": name, "score": round(float(score), 1), "logic": logic} for name, score, logic in rows]
 
 
+def research_summary(symbol: str) -> dict[str, Any]:
+    sym = clean_symbol(symbol or "NVDA")
+    latest = latest_signals(limit=40)
+    signal = next((item for item in latest.get("items", []) if item["symbol"] == sym), None)
+    if not signal:
+        signal = compute_signal({"symbol": sym, "name": sym})
+    quote = load_quotes([sym])
+    quote_item = (quote.get("items") or [None])[0]
+    news = load_news(f"{sym} stock", 10)
+    fundamentals = modeled_fundamentals(sym, quote_item, signal)
+    valuation = valuation_model(sym, quote_item, fundamentals, signal)
+    peers = peer_comparison(sym, 10)
+    delta = signal_delta(sym)
+    regime = market_regime()
+    presets = strategy_presets(signal, fundamentals)
+    return {
+        "source": "research-summary",
+        "symbol": sym,
+        "quote": quote_item,
+        "signal": signal,
+        "news": news.get("items", []),
+        "fundamentals": fundamentals,
+        "valuation": valuation,
+        "peers": peers,
+        "signalDelta": delta,
+        "regime": regime,
+        "strategies": presets,
+        "earnings": {
+            "source": "modeled-calendar",
+            "items": [
+                {"date": (date.today() + timedelta(days=14 + i * 7)).isoformat(), "symbol": sym, "event": label, "time": "AMC" if i % 2 else "BMO"}
+                for i, label in enumerate(["Earnings window", "Investor event", "Estimate revision check"])
+            ],
+        },
+        "memo": {
+            "stance": signal["action"],
+            "summary": f"{sym} ranks {signal['action']} with score {signal['score']:.1f} and confidence {signal['confidence']:.1f}.",
+            "whyNow": signal["reasons"],
+            "riskFlags": signal["risks"],
+            "freshness": signal["freshness"],
+        },
+    }
+
+
+def ticker_detail_payload(symbol: str) -> dict[str, Any]:
+    sym = clean_symbol(symbol or "NVDA")
+    summary = research_summary(sym)
+    history = load_history(sym, "1y")
+    journal = [
+        row for row in paper_journal(200).get("items", [])
+        if row.get("symbol") == sym
+    ]
+    return {
+        "source": "ticker-detail",
+        "symbol": sym,
+        "summary": summary,
+        "history": history.get("items", []),
+        "signalHistory": signal_history(sym, 40).get("items", []),
+        "paperJournal": journal,
+        "calendar": calendar_payload(symbol=sym, market="US"),
+    }
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -1716,6 +1779,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.write_json(data)
             elif parsed.path == "/api/providers/status":
                 self.write_json(provider_status_payload())
+            elif parsed.path == "/api/research/summary":
+                symbol = params.get("symbol", ["NVDA"])[0]
+                self.write_json(research_summary(symbol))
+            elif parsed.path == "/api/ticker/detail":
+                symbol = params.get("symbol", ["NVDA"])[0]
+                self.write_json(ticker_detail_payload(symbol))
             elif parsed.path == "/api/signals/latest":
                 limit = max(1, min(80, int(params.get("limit", ["20"])[0])))
                 self.write_json(latest_signals(limit))
