@@ -1724,6 +1724,132 @@ def ticker_detail_payload(symbol: str) -> dict[str, Any]:
     }
 
 
+def signal_audit_payload(limit: int = 12) -> dict[str, Any]:
+    init_research_db()
+    with db() as conn:
+        runs = [dict(row) for row in conn.execute(
+            "SELECT * FROM signal_runs ORDER BY created_at DESC LIMIT ?",
+            (max(1, min(60, limit)),),
+        )]
+        latest = runs[0]["run_id"] if runs else None
+        rows = [decode_signal_row(row) for row in conn.execute(
+            "SELECT * FROM signals WHERE run_id = ? ORDER BY score DESC, confidence DESC LIMIT 80",
+            (latest,),
+        )] if latest else []
+    deltas = []
+    for row in rows[:40]:
+        delta = signal_delta(row["symbol"])
+        stale = not row.get("freshness", {}).get("quoteDate")
+        deltas.append({
+            "symbol": row["symbol"],
+            "name": row["name"],
+            "action": row["action"],
+            "score": row["score"],
+            "confidence": row["confidence"],
+            "whyChanged": delta.get("changes") or [delta.get("summary")],
+            "warnings": row.get("risks", []) + (["Missing quote date"] if stale else []),
+            "freshness": row.get("freshness", {}),
+        })
+    return {"source": "sqlite-research", "runs": runs, "latest": latest, "items": deltas}
+
+
+def strategy_lab_payload(strategy: str, symbols: list[str] | None = None, lookback_days: int = 126) -> dict[str, Any]:
+    strategy_key = str(strategy or "MOMENTUM").upper()
+    candidates = latest_signals(limit=60).get("items", [])
+    if symbols:
+        wanted = {clean_symbol(symbol) for symbol in symbols}
+        candidates = [item for item in candidates if item["symbol"] in wanted]
+    weights = {
+        "MOMENTUM": {"momentum": 0.42, "trend": 0.30, "risk": 0.12, "sentiment": 0.16},
+        "QUALITY": {"quality": 0.45, "risk": 0.25, "trend": 0.15, "liquidity": 0.15},
+        "VALUE": {"quality": 0.20, "risk": 0.20, "trend": 0.12, "sentiment": 0.08},
+        "REVERSAL": {"risk": 0.35, "sentiment": 0.20, "quality": 0.20, "liquidity": 0.25},
+        "EARN_DRIFT": {"sentiment": 0.35, "momentum": 0.30, "trend": 0.20, "liquidity": 0.15},
+    }.get(strategy_key, {"momentum": 0.35, "trend": 0.25, "quality": 0.20, "risk": 0.20})
+    ranked = []
+    for item in candidates:
+        factors = item.get("factors", {})
+        raw = sum(float(factors.get(key, 50)) * weight for key, weight in weights.items())
+        if strategy_key == "VALUE":
+            raw = (100 - float(factors.get("momentum", 50))) * 0.25 + raw
+        ranked.append({**item, "strategyScore": round(clamp(raw, 0, 100), 1)})
+    ranked.sort(key=lambda item: item["strategyScore"], reverse=True)
+    picks = [item["symbol"] for item in ranked[:8]]
+    backtest = backtest_run(picks, lookback_days)
+    return {
+        "source": "strategy-lab",
+        "strategy": strategy_key,
+        "weights": weights,
+        "ranked": ranked[:30],
+        "backtest": backtest,
+        "notes": ["Strategy scores use stored weekly signal factors", "Backtest is close-to-close and free-data based"],
+    }
+
+
+def portfolio_aware_ranking_payload(limit: int = 40) -> dict[str, Any]:
+    signals = latest_signals(limit=80).get("items", [])
+    portfolio = portfolio_payload()
+    held = {pos["symbol"]: pos for pos in portfolio.get("positions", [])}
+    adjusted = []
+    for signal in signals:
+        symbol = signal["symbol"]
+        factors = signal.get("factors", {})
+        risk = float(factors.get("risk", 50))
+        penalty = 0
+        notes = []
+        if symbol in held:
+            penalty += 8
+            notes.append("Already held in paper book")
+        if risk < 35:
+            penalty += 6
+            notes.append("Low risk factor")
+        if signal.get("action") in {"RISK_OFF", "AVOID"}:
+            penalty += 12
+            notes.append("Signal stance is defensive")
+        adjusted_score = round(float(signal.get("score", 0)) - penalty, 1)
+        adjusted.append({**signal, "portfolioScore": adjusted_score, "portfolioPenalty": penalty, "portfolioNotes": notes})
+    adjusted.sort(key=lambda item: (item["portfolioScore"], item.get("confidence", 0)), reverse=True)
+    return {"source": "portfolio-aware-ranking", "items": adjusted[: max(1, min(100, limit))], "portfolio": portfolio}
+
+
+MARKET_SECTOR_NAMES = {
+    "US": ["Technology", "Financials", "Healthcare", "Consumer Disc", "Communication", "Industrials", "Staples", "Energy", "Materials", "Utilities", "Real Estate", "ETF"],
+    "INDIA": ["IT Services", "Banks", "Energy", "Autos", "FMCG", "Pharma", "Industrials", "Metals", "Telecom", "Financials", "Utilities", "Consumer"],
+    "JAPAN": ["Autos", "Electronics", "Banks", "Trading Houses", "Telecom", "Machinery", "Pharma", "Retail", "Transport", "Real Estate", "Utilities", "Services"],
+    "UK": ["Energy", "Banks", "Pharma", "Mining", "Staples", "Insurance", "Industrials", "Utilities", "Telecom", "Aerospace", "Retail", "REITs"],
+    "EUROPE": ["Semis", "Luxury", "Industrials", "Pharma", "Banks", "Autos", "Chemicals", "Energy", "Insurance", "Telecom", "Utilities", "Software"],
+    "HONGKONG": ["Internet", "Banks", "Insurance", "Property", "Consumer", "Autos", "Energy", "Telecom", "Healthcare", "Utilities", "Industrials", "Materials"],
+    "CANADA": ["Banks", "Energy", "Materials", "Rail", "Insurance", "Telecom", "Utilities", "Real Estate", "Industrials", "Tech", "Staples", "Healthcare"],
+    "AUSTRALIA": ["Materials", "Banks", "Healthcare", "Staples", "Energy", "Insurance", "Telecom", "Industrials", "REITs", "Utilities", "Consumer", "Tech"],
+}
+
+
+def sector_map_payload(market: str) -> dict[str, Any]:
+    key, config = market_config(market)
+    universe = market_universe_payload(key).get("items", [])
+    names = MARKET_SECTOR_NAMES.get(key, MARKET_SECTOR_NAMES["US"])
+    buckets = {name: {"name": name, "symbols": [], "weight": 0.0, "performance": 0.0} for name in names}
+    selected = universe[:240] or [{"symbol": row[0], "name": row[1]} for row in config.get("symbols", [])]
+    quotes = {item["symbol"]: item for item in load_quotes([item["symbol"] for item in selected[:60]]).get("items", [])}
+    for item in selected:
+        symbol = clean_symbol(item.get("symbol", ""))
+        sector = names[int(deterministic_value(symbol, "sector", 0, len(names) - 0.001))]
+        buckets[sector]["symbols"].append(symbol)
+        buckets[sector]["weight"] += 1
+        if symbol in quotes and quotes[symbol].get("changePct") is not None:
+            buckets[sector].setdefault("_moves", []).append(float(quotes[symbol]["changePct"]))
+    rows = []
+    total = max(1, len(selected))
+    for bucket in buckets.values():
+        moves = bucket.pop("_moves", [])
+        bucket["weight"] = round(bucket["weight"] / total * 100, 1)
+        bucket["performance"] = round(average(moves) if moves else deterministic_value(bucket["name"], key, -1.8, 1.8), 2)
+        bucket["leaders"] = bucket["symbols"][:5]
+        rows.append(bucket)
+    rows.sort(key=lambda item: item["weight"], reverse=True)
+    return {"source": "market-sector-map", "market": key, "items": rows}
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -1785,6 +1911,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             elif parsed.path == "/api/ticker/detail":
                 symbol = params.get("symbol", ["NVDA"])[0]
                 self.write_json(ticker_detail_payload(symbol))
+            elif parsed.path == "/api/signals/audit":
+                limit = max(1, min(60, int(params.get("limit", ["12"])[0])))
+                self.write_json(signal_audit_payload(limit))
+            elif parsed.path == "/api/portfolio/ranking":
+                limit = max(1, min(100, int(params.get("limit", ["40"])[0])))
+                self.write_json(portfolio_aware_ranking_payload(limit))
+            elif parsed.path == "/api/sectors/map":
+                market = params.get("market", ["US"])[0]
+                self.write_json(sector_map_payload(market))
             elif parsed.path == "/api/signals/latest":
                 limit = max(1, min(80, int(params.get("limit", ["20"])[0])))
                 self.write_json(latest_signals(limit))
@@ -1801,6 +1936,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     symbols = None
                 limit = max(1, min(120, int(payload.get("limit", 30))))
                 self.write_json(run_weekly_signals(limit=limit, symbols=symbols))
+            elif parsed.path == "/api/strategy/run" and self.command == "POST":
+                payload = self.read_json_body()
+                symbols = payload.get("symbols")
+                if isinstance(symbols, str):
+                    symbols = symbols.split(",")
+                if symbols is not None and not isinstance(symbols, list):
+                    symbols = None
+                lookback = max(21, min(252, int(payload.get("lookbackDays", 126))))
+                self.write_json(strategy_lab_payload(payload.get("strategy", "MOMENTUM"), symbols=symbols, lookback_days=lookback))
             else:
                 self.write_json({"error": "Unknown endpoint"}, status=404)
         except urllib.error.URLError as exc:
