@@ -1473,6 +1473,194 @@ def signal_history(symbol: str, limit: int = 20) -> dict[str, Any]:
     return {"source": "sqlite-research", "symbol": sym, "items": [decode_signal_row(row) for row in rows]}
 
 
+def symbol_metadata(symbol: str) -> dict[str, Any]:
+    sym = clean_symbol(symbol)
+    metadata = universe_name_map()
+    if sym in metadata:
+        return metadata[sym]
+    for config in MARKET_UNIVERSES.values():
+        for row in config.get("symbols", []):
+            if clean_symbol(row[0]) == sym:
+                return {"symbol": sym, "name": row[1], "exchange": row[2], "assetType": row[3]}
+    return {"symbol": sym, "name": sym, "exchange": "Listed", "assetType": "Stock"}
+
+
+def modeled_fundamentals(symbol: str, quote: dict[str, Any] | None, signal: dict[str, Any]) -> dict[str, Any]:
+    sym = clean_symbol(symbol)
+    price = float((quote or {}).get("close") or signal.get("price") or deterministic_value(sym, "price", 20, 320))
+    quality = float(signal.get("factors", {}).get("quality", deterministic_value(sym, "quality-score", 35, 82)))
+    growth_factor = float(signal.get("factors", {}).get("momentum", deterministic_value(sym, "growth-score", 35, 82)))
+    risk_factor = float(signal.get("factors", {}).get("risk", deterministic_value(sym, "risk-score", 35, 82)))
+    shares_m = deterministic_value(sym, "shares", 180, 5200)
+    revenue_b = deterministic_value(sym, "revenue", 6, 360)
+    revenue_growth = clamp((growth_factor - 45) * 0.65 + deterministic_value(sym, "rev-growth", -4, 12), -18, 42)
+    eps_growth = clamp(revenue_growth + deterministic_value(sym, "eps-growth", -6, 10), -22, 48)
+    gross_margin = clamp(28 + quality * 0.45 + deterministic_value(sym, "gross-margin", -8, 12), 12, 88)
+    operating_margin = clamp(gross_margin * 0.48 + deterministic_value(sym, "op-margin", -7, 8), 3, 52)
+    net_margin = clamp(operating_margin * 0.72 + deterministic_value(sym, "net-margin", -4, 5), 1, 42)
+    eps_ttm = max(0.05, price / deterministic_value(sym, "pe", 12, 46))
+    market_cap_b = price * shares_m / 1000
+    revenue_per_share = (revenue_b * 1000) / shares_m if shares_m else 0
+    pe = price / eps_ttm if eps_ttm else 0
+    ps = price / revenue_per_share if revenue_per_share else 0
+    roe = clamp(6 + quality * 0.33 + deterministic_value(sym, "roe", -5, 11), -5, 44)
+    debt_equity = clamp((100 - risk_factor) / 55 + deterministic_value(sym, "de", 0.05, 1.15), 0.02, 3.8)
+    return {
+        "source": "modeled-public-data",
+        "asOf": now_iso(),
+        "modeled": True,
+        "revenueTtmB": round(revenue_b, 2),
+        "revenueGrowthPct": round(revenue_growth, 1),
+        "epsTtm": round(eps_ttm, 2),
+        "epsGrowthPct": round(eps_growth, 1),
+        "grossMarginPct": round(gross_margin, 1),
+        "operatingMarginPct": round(operating_margin, 1),
+        "netMarginPct": round(net_margin, 1),
+        "debtToEquity": round(debt_equity, 2),
+        "roePct": round(roe, 1),
+        "marketCapB": round(market_cap_b, 2),
+        "multiples": {
+            "pe": round(pe, 1),
+            "forwardPe": round(pe / (1 + max(-0.25, min(0.45, eps_growth / 100))), 1),
+            "priceSales": round(ps, 1),
+            "evEbitda": round(deterministic_value(sym, "ev-ebitda", 6, 28), 1),
+            "priceBook": round(deterministic_value(sym, "pb", 1.2, 16), 1),
+            "peg": round(max(0.1, pe / max(3, eps_growth)), 2),
+        },
+        "warnings": ["Fundamentals are modeled until a fundamentals provider is configured"],
+    }
+
+
+def valuation_model(symbol: str, quote: dict[str, Any] | None, fundamentals: dict[str, Any], signal: dict[str, Any]) -> dict[str, Any]:
+    sym = clean_symbol(symbol)
+    price = float((quote or {}).get("close") or signal.get("price") or 0)
+    eps = float(fundamentals.get("epsTtm") or 0.1)
+    growth = clamp(float(fundamentals.get("epsGrowthPct") or 6), -8, 28) / 100
+    discount = deterministic_value(sym, "discount", 8.5, 12.5) / 100
+    terminal_growth = deterministic_value(sym, "terminal-growth", 1.8, 3.8) / 100
+    terminal_multiple = clamp(12 + growth * 72 + deterministic_value(sym, "terminal-multiple", -3, 5), 8, 32)
+    cash_flows = []
+    for year in range(1, 6):
+        eps = max(0.01, eps * (1 + growth * (1 - year * 0.045)))
+        cash_flows.append(eps / ((1 + discount) ** year))
+    terminal_value = eps * terminal_multiple / ((1 + discount) ** 5)
+    fair_value = sum(cash_flows) + terminal_value
+    if price and fair_value:
+        upside = ((fair_value - price) / price) * 100
+    else:
+        upside = 0
+    return {
+        "source": "dcf-lite-modeled",
+        "modeled": True,
+        "fairValue": round(fair_value, 2),
+        "upsidePct": round(upside, 1),
+        "bullValue": round(fair_value * 1.22, 2),
+        "bearValue": round(fair_value * 0.76, 2),
+        "assumptions": {
+            "growth5yPct": round(growth * 100, 1),
+            "discountRatePct": round(discount * 100, 1),
+            "terminalGrowthPct": round(terminal_growth * 100, 1),
+            "terminalMultiple": round(terminal_multiple, 1),
+        },
+    }
+
+
+def peer_comparison(symbol: str, limit: int = 10) -> list[dict[str, Any]]:
+    sym = clean_symbol(symbol)
+    curated = {
+        "NVDA": ["AMD", "AVGO", "MSFT", "GOOGL", "META", "TSLA", "ORCL", "ADBE", "CRM", "ASML.AS"],
+        "AAPL": ["MSFT", "GOOGL", "AMZN", "META", "NVDA", "AVGO", "QCOM", "ORCL"],
+        "MSFT": ["AAPL", "GOOGL", "AMZN", "META", "NVDA", "ORCL", "CRM", "ADBE"],
+        "JPM": ["BAC", "WFC", "C", "GS", "MS", "BLK", "V", "MA"],
+        "TSLA": ["GM", "F", "RIVN", "LCID", "TM", "7203.T", "BYDDY", "NIO"],
+    }
+    if sym in curated:
+        candidates = [{"symbol": item, "name": item, "exchange": "Peer", "assetType": "Stock"} for item in curated[sym]]
+    else:
+        meta = symbol_metadata(sym)
+        universe = list(universe_name_map().values())
+        candidates = [item for item in universe if clean_symbol(item.get("symbol", "")) != sym and item.get("assetType") == meta.get("assetType")]
+        if len(candidates) < limit:
+            candidates.extend({"symbol": row[0], "name": row[1], "exchange": row[2], "assetType": row[3]} for row in MARKET_UNIVERSES.get("US", {}).get("symbols", []))
+    selected = []
+    seen = set()
+    for item in candidates:
+        candidate = clean_symbol(item.get("symbol", ""))
+        if not candidate or candidate in seen or candidate == sym:
+            continue
+        seen.add(candidate)
+        selected.append(item)
+        if len(selected) >= limit:
+            break
+    quotes = {item["symbol"]: item for item in load_quotes([item["symbol"] for item in selected]).get("items", [])}
+    rows = []
+    for item in selected:
+        candidate = clean_symbol(item.get("symbol", ""))
+        quote = quotes.get(candidate, {})
+        score = deterministic_value(candidate, "peer-score", 35, 88)
+        rows.append(
+            {
+                "symbol": candidate,
+                "name": item.get("name") or candidate,
+                "exchange": item.get("exchange") or "Listed",
+                "price": quote.get("close"),
+                "changePct": quote.get("changePct"),
+                "score": round(score, 1),
+                "pe": round(deterministic_value(candidate, "peer-pe", 11, 45), 1),
+                "revenueGrowthPct": round(deterministic_value(candidate, "peer-growth", -8, 32), 1),
+            }
+        )
+    return sorted(rows, key=lambda row: row["score"], reverse=True)
+
+
+def signal_delta(symbol: str) -> dict[str, Any]:
+    rows = signal_history(symbol, 8).get("items", [])
+    if len(rows) < 2:
+        return {"status": "NEW_OR_SINGLE_RUN", "summary": "No prior stored run to compare yet.", "changes": []}
+    current, previous = rows[0], rows[1]
+    score_delta = round(float(current.get("score") or 0) - float(previous.get("score") or 0), 1)
+    changes = [f"Score changed {score_delta:+.1f} since prior run"]
+    for key, value in (current.get("factors") or {}).items():
+        prev = float((previous.get("factors") or {}).get(key, value) or 0)
+        delta = round(float(value or 0) - prev, 1)
+        if abs(delta) >= 4:
+            changes.append(f"{key} factor moved {delta:+.1f}")
+    return {"status": "COMPARED", "scoreDelta": score_delta, "summary": changes[0], "changes": changes[:5]}
+
+
+def market_regime() -> dict[str, Any]:
+    history = load_history("SPY", "6m").get("items", [])
+    closes = [float(row["close"]) for row in history if row.get("close") is not None]
+    returns = [(cur - prev) / prev for prev, cur in zip(closes[:-1], closes[1:]) if prev]
+    price = closes[-1] if closes else 0
+    sma50 = average(closes[-50:])
+    sma100 = average(closes[-100:])
+    vol = stddev(returns[-21:]) * math.sqrt(252) * 100 if returns else 0
+    breadth_proxy = pct_change(closes, 21)
+    risk_on = price >= sma50 and sma50 >= sma100 and vol < 24
+    return {
+        "source": "SPY breadth proxy",
+        "state": "RISK_ON" if risk_on else "RISK_OFF" if vol >= 28 or price < sma100 else "MIXED",
+        "volatilityPct": round(vol, 1),
+        "breadthProxyPct": round(breadth_proxy, 1),
+        "priceVs50dPct": round(((price - sma50) / sma50) * 100, 1) if sma50 else 0,
+        "notes": ["Uses SPY as free-data regime proxy", "Replace with official breadth/rates feeds later"],
+    }
+
+
+def strategy_presets(signal: dict[str, Any], fundamentals: dict[str, Any]) -> list[dict[str, Any]]:
+    factors = signal.get("factors") or {}
+    value_score = clamp(85 - float(fundamentals.get("multiples", {}).get("pe", 25)) * 1.35, 0, 100)
+    rows = [
+        ("MOMENTUM", factors.get("momentum", 50), "trend + 1M/3M price persistence"),
+        ("QUALITY", factors.get("quality", 50), "margin/ROE proxy + signal quality"),
+        ("VALUE", value_score, "relative multiple compression"),
+        ("REVERSAL", 100 - abs(float(factors.get("momentum", 50)) - 50) * 1.8, "mean reversion from stretched moves"),
+        ("EARN_DRIFT", (float(factors.get("sentiment", 50)) + float(factors.get("momentum", 50))) / 2, "earnings/news drift proxy"),
+    ]
+    return [{"name": name, "score": round(float(score), 1), "logic": logic} for name, score, logic in rows]
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
