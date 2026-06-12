@@ -1045,9 +1045,176 @@
     );
   }
 
+  function SignalTrust({ theme, signals, currentSym, onPick }) {
+    const items = (signals || []).map((s) => {
+      const trust = s.trust || s;
+      const symbol = s.symbol || s.sym || trust.symbol || trust.sym;
+      const action = s.action || trust.action || (s.side === 'SHORT' ? 'SHORT_CANDIDATE' : 'LONG_CANDIDATE');
+      return {
+        ...s,
+        symbol,
+        action,
+        score: Number(s.score ?? trust.score ?? s.conf ?? trust.confidence ?? 0),
+        confidence: Number(s.confidence ?? trust.confidence ?? s.conf ?? 0),
+      };
+    }).filter((s) => s.symbol).slice(0, 28);
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '46px 42px 42px 1fr', gap: 4, color: theme.dim, fontSize: 8, borderBottom: `1px solid ${theme.border}`, paddingBottom: 2 }}>
+          <span>SYM</span><span>SCORE</span><span>CONF</span><span>STANCE</span>
+        </div>
+        {items.map(s => {
+          const hot = s.action === 'LONG_CANDIDATE';
+          const color = hot ? theme.up : s.action === 'AVOID' || s.action === 'RISK_OFF' ? theme.down : theme.warn;
+          return (
+            <button key={s.symbol} onClick={() => onPick(s.symbol)} style={{
+              display: 'grid', gridTemplateColumns: '46px 42px 42px 1fr', gap: 4, width: '100%',
+              padding: '2px 0', background: s.symbol === currentSym ? theme.panelHi : 'transparent',
+              border: 'none', borderBottom: `1px dotted ${theme.border}`,
+              color: theme.text, fontFamily: theme.fontMono, fontSize: 10, textAlign: 'left', cursor: 'pointer',
+            }}>
+              <span style={{ color: theme.accent, fontWeight: 800 }}>{s.symbol}</span>
+              <span style={{ color: theme.textBright, fontVariantNumeric: 'tabular-nums' }}>{Number(s.score || 0).toFixed(1)}</span>
+              <span style={{ color: theme.dim, fontVariantNumeric: 'tabular-nums' }}>{Number(s.confidence || 0).toFixed(0)}</span>
+              <span style={{ color, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.action}</span>
+            </button>
+          );
+        })}
+        {!items.length && <div style={{ color: theme.dim, padding: 6 }}>WAITING FOR WEEKLY SIGNAL RUN</div>}
+      </div>
+    );
+  }
+
+  function ProviderHealth({ theme, providers }) {
+    const rows = providers || [];
+    return (
+      <div style={{ fontSize: 9, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        {rows.map(p => {
+          const ok = p.status === 'OK' || p.status === 'BOOT';
+          return (
+            <div key={p.name} style={{ padding: '3px 0', borderBottom: `1px dotted ${theme.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4 }}>
+                <span style={{ color: theme.accent, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                <span style={{ color: ok ? theme.up : theme.down, fontWeight: 800 }}>{p.status}</span>
+              </div>
+              <div style={{ color: theme.dim, fontSize: 8, display: 'flex', justifyContent: 'space-between' }}>
+                <span>{p.provider_type}</span>
+                <span>{p.latency_ms == null ? '--' : p.latency_ms + 'ms'}</span>
+              </div>
+            </div>
+          );
+        })}
+        {!rows.length && <div style={{ color: theme.dim, padding: 6 }}>PROVIDER HEARTBEAT PENDING</div>}
+      </div>
+    );
+  }
+
+  function ResearchMemo({ theme, summary }) {
+    const memo = summary && summary.memo;
+    const signal = summary && summary.signal;
+    const reasons = memo ? memo.whyNow || [] : [];
+    const risks = memo ? memo.riskFlags || [] : [];
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        {!memo ? (
+          <div style={{ color: theme.dim, padding: 6 }}>BUILDING RESEARCH MEMO FROM LIVE DATA</div>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 54px 54px', gap: 6, marginBottom: 4 }}>
+              <div style={{ color: theme.textBright, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{memo.stance}</div>
+              <div style={{ color: theme.accent, textAlign: 'right' }}>{Number(signal.score || 0).toFixed(1)}</div>
+              <div style={{ color: theme.warn, textAlign: 'right' }}>{Number(signal.confidence || 0).toFixed(0)}%</div>
+            </div>
+            <div style={{ color: theme.dim, fontSize: 9, lineHeight: 1.25, marginBottom: 4 }}>{memo.summary}</div>
+            {reasons.slice(0, 3).map((r, i) => (
+              <div key={'r' + i} style={{ color: theme.text, borderTop: `1px dotted ${theme.border}`, padding: '2px 0' }}>+ {r}</div>
+            ))}
+            {risks.slice(0, 2).map((r, i) => (
+              <div key={'k' + i} style={{ color: theme.warn, borderTop: `1px dotted ${theme.border}`, padding: '2px 0' }}>! {r}</div>
+            ))}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  function BacktestPanel({ theme, backtest }) {
+    const rows = backtest ? backtest.items || [] : [];
+    const summary = backtest ? backtest.summary || {} : {};
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', overflow: 'auto' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 4 }}>
+          <div style={{ background: theme.bg2, border: `1px solid ${theme.border}`, padding: 4 }}>
+            <div style={{ color: theme.dim, fontSize: 8 }}>AVG RET</div>
+            <div style={{ color: (summary.avgReturnPct || 0) >= 0 ? theme.up : theme.down, fontWeight: 800 }}>{fmt.pct(summary.avgReturnPct || 0)}</div>
+          </div>
+          <div style={{ background: theme.bg2, border: `1px solid ${theme.border}`, padding: 4 }}>
+            <div style={{ color: theme.dim, fontSize: 8 }}>WIN RATE</div>
+            <div style={{ color: theme.textBright, fontWeight: 800 }}>{(summary.winRatePct || 0).toFixed(1)}%</div>
+          </div>
+        </div>
+        {rows.slice(0, 5).map(row => (
+          <div key={row.symbol} style={{ display: 'grid', gridTemplateColumns: '44px 1fr 54px', gap: 4, padding: '2px 0', borderBottom: `1px dotted ${theme.border}` }}>
+            <span style={{ color: theme.accent, fontWeight: 700 }}>{row.symbol}</span>
+            <span style={{ color: theme.dim }}>{row.start} -> {row.end}</span>
+            <span style={{ color: row.returnPct >= 0 ? theme.up : theme.down, textAlign: 'right', fontWeight: 700 }}>{fmt.pct(row.returnPct)}</span>
+          </div>
+        ))}
+        {!backtest && <div style={{ color: theme.dim, padding: 6 }}>BACKTEST RUN PENDING</div>}
+      </div>
+    );
+  }
+
+  function PaperTrading({ theme, positions, paper, onPick, currentSym }) {
+    const [msg, setMsg] = React.useState('');
+    const journal = paper.paperJournal || [];
+    const send = async (side) => {
+      if (!paper.placePaperOrder) return;
+      setMsg('SENDING PAPER ' + side + '...');
+      try {
+        const res = await paper.placePaperOrder(currentSym, side, 10);
+        setMsg(`${res.status} ${res.side} ${res.qty} ${res.symbol} @ ${res.fillPrice || 'WORKING'}`);
+      } catch (err) {
+        setMsg(String(err.message || err));
+      }
+    };
+    return (
+      <div style={{ fontSize: 10, fontFamily: theme.fontMono, height: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <PortfolioPnL theme={theme} positions={positions} onPick={onPick} currentSym={currentSym} />
+        <div style={{ overflow: 'auto', borderLeft: `1px solid ${theme.border}`, paddingLeft: 8 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+            <button onClick={() => send('BUY')} style={{ background: theme.up, color: theme.bg, border: 'none', padding: '3px 8px', fontFamily: theme.fontMono, fontWeight: 800, cursor: 'pointer' }}>BUY 10</button>
+            <button onClick={() => send('SELL')} style={{ background: theme.down, color: theme.bg, border: 'none', padding: '3px 8px', fontFamily: theme.fontMono, fontWeight: 800, cursor: 'pointer' }}>SELL 10</button>
+          </div>
+          <div style={{ color: theme.warn, minHeight: 14, marginBottom: 4 }}>{msg || 'PAPER ONLY · DUPLICATES BLOCKED'}</div>
+          {(paper.portfolio?.positions || []).slice(0, 5).map(pos => (
+            <div key={pos.symbol} style={{ display: 'grid', gridTemplateColumns: '44px 48px 1fr', gap: 4, borderBottom: `1px dotted ${theme.border}`, padding: '2px 0' }}>
+              <span style={{ color: theme.accent, fontWeight: 700 }}>{pos.symbol}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{pos.qty}</span>
+              <span style={{ color: theme.dim, textAlign: 'right' }}>${(pos.marketValue || 0).toFixed(0)}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ overflow: 'auto', borderLeft: `1px solid ${theme.border}`, paddingLeft: 8 }}>
+          <div style={{ color: theme.dim, fontSize: 8, borderBottom: `1px solid ${theme.border}`, paddingBottom: 2 }}>PAPER JOURNAL</div>
+          {journal.slice(0, 8).map(o => (
+            <div key={o.order_id} style={{ display: 'grid', gridTemplateColumns: '50px 36px 42px 1fr', gap: 4, borderBottom: `1px dotted ${theme.border}`, padding: '2px 0' }}>
+              <span style={{ color: theme.accent, fontWeight: 700 }}>{o.symbol}</span>
+              <span style={{ color: o.side === 'BUY' ? theme.up : theme.down }}>{o.side}</span>
+              <span style={{ color: theme.text, textAlign: 'right' }}>{o.qty}</span>
+              <span style={{ color: o.status === 'FILLED' ? theme.up : theme.warn, textAlign: 'right' }}>{o.status}</span>
+            </div>
+          ))}
+          {!journal.length && <div style={{ color: theme.dim, padding: 6 }}>NO PAPER ORDERS YET</div>}
+        </div>
+      </div>
+    );
+  }
+
   Object.assign(window, {
     Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores, OrderBook, OptionsFlow, NewsFeed,
     InsiderTx, ShortInterest, SectorHeatmap, Watchlist, TopMovers, EarningsCal, EconCal,
-    TradeIdeas, CorrMatrix, PortfolioPnL, RiskMetrics,
+    TradeIdeas, CorrMatrix, PortfolioPnL, RiskMetrics, SignalTrust, ProviderHealth,
+    ResearchMemo, BacktestPanel, PaperTrading,
   });
 })();
