@@ -1706,6 +1706,231 @@
     );
   }
 
+  function useJson(url, initial) {
+    const [state, setState] = React.useState({ loading: true, data: initial || null, error: '' });
+    React.useEffect(() => {
+      let live = true;
+      setState(s => ({ ...s, loading: true, error: '' }));
+      fetch(url, { cache: 'no-store' }).then(res => res.json().then(data => ({ res, data }))).then(({ res, data }) => {
+        if (!live) return;
+        if (!res.ok || data.error) throw new Error(data.detail || data.error || url);
+        setState({ loading: false, data, error: '' });
+      }).catch(err => live && setState({ loading: false, data: initial || null, error: err.message || 'Request failed' }));
+      return () => { live = false; };
+    }, [url]);
+    return state;
+  }
+
+  function FullTickerPage({ theme, symbol, ticker, market, research, onPick }) {
+    const [sub, setSub] = React.useState('OVERVIEW');
+    const detail = useJson(`/api/ticker/detail?symbol=${encodeURIComponent(symbol)}`, { summary: research.summary }).data || {};
+    const summary = detail.summary || research.summary || {};
+    const signal = summary.signal || {};
+    const fundamentals = summary.fundamentals || {};
+    const valuation = summary.valuation || {};
+    const Chart = window.PriceChart;
+    const subtabs = ['OVERVIEW', 'FINANCIALS', 'VALUATION', 'NEWS', 'SIGNALS', 'BACKTEST', 'PEERS', 'PAPER'];
+    return (
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 5 }}>
+        <div style={{ display: 'flex', gap: 3 }}>
+          {subtabs.map(name => <button key={name} onClick={() => setSub(name)} style={{ background: sub === name ? theme.accent : theme.panelHi, color: sub === name ? theme.bg : theme.dim, border: `1px solid ${sub === name ? theme.accent : theme.border}`, fontFamily: theme.fontMono, fontSize: 9, fontWeight: 800, padding: '2px 7px', cursor: 'pointer' }}>{name}</button>)}
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          {sub === 'OVERVIEW' && (
+            <div style={{ height: '100%', display: 'grid', gridTemplateColumns: '1.35fr 1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 6 }}>
+              <Panel theme={theme} code="CHRT" title={`${symbol} - full chart`} style={{ gridRow: 'span 2' }} bodyStyle={{ padding: 0 }}>{Chart && <Chart ticker={ticker} theme={theme} range="1Y" showMA20={true} showMA50={true} showMA200={true} showBB={false} />}</Panel>
+              <Panel theme={theme} code="SIGN" title="signal trust"><SignalCard theme={theme} signal={signal} /></Panel>
+              <Panel theme={theme} code="FUND" title="fundamental snapshot"><FundamentalsMini theme={theme} fundamentals={fundamentals} /></Panel>
+              <Panel theme={theme} code="VAL" title="valuation"><ValuationMini theme={theme} valuation={valuation} /></Panel>
+              <Panel theme={theme} code="REGM" title="regime"><RegimeMini theme={theme} regime={summary.regime || {}} /></Panel>
+            </div>
+          )}
+          {sub === 'FINANCIALS' && <FinancialStatementView theme={theme} fundamentals={fundamentals} />}
+          {sub === 'VALUATION' && <ValuationWorkbench theme={theme} valuation={valuation} fundamentals={fundamentals} />}
+          {sub === 'NEWS' && <NewsArticleList theme={theme} news={summary.news || []} />}
+          {sub === 'SIGNALS' && <SignalHistoryMini theme={theme} rows={detail.signalHistory || []} />}
+          {sub === 'BACKTEST' && <SingleBacktestView theme={theme} symbol={symbol} />}
+          {sub === 'PEERS' && <PeerComparisonTable theme={theme} peers={summary.peers || []} onPick={onPick} />}
+          {sub === 'PAPER' && <PaperJournalView theme={theme} symbol={symbol} journal={detail.paperJournal || []} />}
+        </div>
+      </div>
+    );
+  }
+
+  function DenseTable({ theme, rows = [], headers = [], onRow, empty, highlight }) {
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 10, fontFamily: theme.fontMono }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${headers.length}, minmax(70px, 1fr))`, gap: 5, color: theme.dim, fontSize: 8, borderBottom: `1px solid ${theme.border}`, padding: '0 4px 3px', position: 'sticky', top: 0, background: theme.panel, zIndex: 1 }}>{headers.map(h => <span key={h}>{h}</span>)}</div>
+        {rows.map((row, i) => {
+          const content = row.map((cell, j) => <span key={j} style={{ color: j === 0 ? theme.accent : theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{cell}</span>);
+          const style = { display: 'grid', gridTemplateColumns: `repeat(${headers.length}, minmax(70px, 1fr))`, gap: 5, padding: '4px', width: '100%', background: row[0] === highlight ? theme.panelHi : 'transparent', border: 'none', borderBottom: `1px dotted ${theme.border}`, fontFamily: theme.fontMono, fontSize: 10, textAlign: 'left' };
+          return onRow ? <button key={i} onClick={() => onRow(i)} style={{ ...style, cursor: 'pointer' }}>{content}</button> : <div key={i} style={style}>{content}</div>;
+        })}
+        {!rows.length && <div style={{ color: theme.dim, padding: 12 }}>{empty || 'No rows loaded.'}</div>}
+      </div>
+    );
+  }
+
+  function MetricBox({ theme, label, value, color }) {
+    return <div style={{ background: theme.bg2, border: `1px solid ${theme.border}`, padding: 6 }}><div style={{ color: theme.dim, fontSize: 8 }}>{label}</div><div style={{ color: color || theme.textBright, fontWeight: 900, fontSize: 15 }}>{value}</div></div>;
+  }
+
+  function SignalCard({ theme, signal = {} }) {
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginBottom: 6 }}>
+          <MetricBox theme={theme} label="STANCE" value={signal.action || '--'} color={signal.action === 'LONG_CANDIDATE' ? theme.up : signal.action === 'AVOID' ? theme.down : theme.warn} />
+          <MetricBox theme={theme} label="SCORE" value={Number(signal.score || 0).toFixed(1)} />
+          <MetricBox theme={theme} label="CONF" value={`${Number(signal.confidence || 0).toFixed(0)}%`} />
+        </div>
+        {(signal.reasons || []).map((item, i) => <div key={i} style={{ color: theme.up, borderBottom: `1px dotted ${theme.border}`, padding: '3px 0' }}>+ {item}</div>)}
+        {(signal.risks || []).map((item, i) => <div key={'r'+i} style={{ color: theme.warn, padding: '3px 0' }}>! {item}</div>)}
+      </div>
+    );
+  }
+
+  function FinancialStatementView({ theme, fundamentals = {} }) {
+    const rows = [
+      ['Revenue TTM', `$${Number(fundamentals.revenueTtmB || 0).toFixed(2)}B`, 'Provider slot: income statement revenue'],
+      ['Revenue growth', fmt.pct(fundamentals.revenueGrowthPct || 0), 'YoY growth model/provider field'],
+      ['EPS TTM', Number(fundamentals.epsTtm || 0).toFixed(2), 'Trailing diluted EPS'],
+      ['EPS growth', fmt.pct(fundamentals.epsGrowthPct || 0), 'Modeled estimate growth until estimates feed'],
+      ['Gross margin', fmt.pct(fundamentals.grossMarginPct || 0), 'Gross profit / revenue'],
+      ['Operating margin', fmt.pct(fundamentals.operatingMarginPct || 0), 'Operating income / revenue'],
+      ['Net margin', fmt.pct(fundamentals.netMarginPct || 0), 'Net income / revenue'],
+      ['Debt / equity', Number(fundamentals.debtToEquity || 0).toFixed(2), 'Balance-sheet leverage'],
+      ['ROE', fmt.pct(fundamentals.roePct || 0), 'Return on equity'],
+    ];
+    return <DenseTable theme={theme} rows={rows} headers={['METRIC', 'VALUE', 'NOTES']} />;
+  }
+
+  function ValuationWorkbench({ theme, valuation = {}, fundamentals = {} }) {
+    const assumptions = valuation.assumptions || {};
+    const rows = [
+      ['Fair value', fmt.money(valuation.fairValue || 0), 'DCF-lite base case'],
+      ['Bull value', fmt.money(valuation.bullValue || 0), 'Base + optimistic spread'],
+      ['Bear value', fmt.money(valuation.bearValue || 0), 'Base - drawdown haircut'],
+      ['Upside', fmt.pct(valuation.upsidePct || 0), 'Fair value versus last quote'],
+      ['Growth 5Y', fmt.pct(assumptions.growth5yPct || 0), 'Modeled from EPS/revenue growth'],
+      ['Discount rate', fmt.pct(assumptions.discountRatePct || 0), 'Risk-adjusted modeled WACC proxy'],
+      ['Terminal multiple', Number(assumptions.terminalMultiple || 0).toFixed(1), 'Exit multiple assumption'],
+      ['P/E', Number(fundamentals.multiples?.pe || 0).toFixed(1), 'Current multiple'],
+      ['EV/EBITDA', Number(fundamentals.multiples?.evEbitda || 0).toFixed(1), 'Provider-ready multiple slot'],
+    ];
+    return <DenseTable theme={theme} rows={rows} headers={['INPUT', 'VALUE', 'INTERPRETATION']} />;
+  }
+
+  function NewsArticleList({ theme, news = [] }) {
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 11 }}>
+        {news.map((n, i) => (
+          <a key={i} href={n.link || '#'} target="_blank" rel="noopener noreferrer" style={{ display: 'grid', gridTemplateColumns: '70px 1fr 44px', gap: 8, color: theme.text, textDecoration: 'none', padding: '6px 4px', borderBottom: `1px dotted ${theme.border}` }}>
+            <span style={{ color: theme.dim }}>{(n.source || 'NEWS').toUpperCase()}</span>
+            <span>{n.title || n.head}</span>
+            <span style={{ color: Number(n.sentiment || 0) >= 0 ? theme.up : theme.down, textAlign: 'right' }}>{Number(n.sentiment || 0) >= 0 ? 'POS' : 'NEG'}</span>
+          </a>
+        ))}
+        {!news.length && <div style={{ color: theme.dim, padding: 12 }}>No articles loaded.</div>}
+      </div>
+    );
+  }
+
+  function SingleBacktestView({ theme, symbol }) {
+    const [lookback, setLookback] = React.useState(126);
+    const [data, setData] = React.useState(null);
+    const run = React.useCallback(() => {
+      fetch('/api/backtest/run', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbols: [symbol], lookbackDays: lookback }) }).then(res => res.json()).then(setData).catch(() => setData(null));
+    }, [symbol, lookback]);
+    React.useEffect(run, [run]);
+    return (
+      <div style={{ height: '100%', display: 'grid', gridTemplateColumns: '280px 1fr', gap: 6 }}>
+        <Panel theme={theme} code="CTRL" title="backtest controls"><div style={{ display: 'grid', gap: 6, fontSize: 10 }}><label style={{ color: theme.dim }}>LOOKBACK DAYS</label><input type="number" value={lookback} min="21" max="252" onChange={e => setLookback(Number(e.target.value))} style={{ background: theme.bg2, color: theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono, padding: 5 }} /><button onClick={run} style={{ background: theme.accent, color: theme.bg, border: 'none', fontFamily: theme.fontMono, fontWeight: 900, padding: 6, cursor: 'pointer' }}>RUN</button><BacktestMini theme={theme} backtest={data} /></div></Panel>
+        <Panel theme={theme} code="EQTY" title="equity curve / drawdown"><BacktestCurveLarge theme={theme} backtest={data} /></Panel>
+      </div>
+    );
+  }
+
+  function BacktestCurveLarge({ theme, backtest }) {
+    const curve = backtest?.equityCurve || [];
+    const values = curve.map(p => Number(p.equity || 1));
+    const min = Math.min(...values, 0.95);
+    const max = Math.max(...values, 1.05);
+    const poly = values.map((v, i) => `${(i / Math.max(1, values.length - 1) * 100).toFixed(2)},${(92 - ((v - min) / Math.max(0.001, max - min)) * 84).toFixed(2)}`).join(' ');
+    return <div style={{ height: '100%', display: 'grid', gridTemplateRows: '1fr auto', gap: 6 }}><svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%', background: theme.bg2, border: `1px solid ${theme.border}` }}><polyline points={poly} fill="none" stroke={values[values.length - 1] >= values[0] ? theme.up : theme.down} strokeWidth="1.7" vectorEffect="non-scaling-stroke" /></svg><div style={{ color: theme.dim, fontSize: 10 }}>{backtest?.method || 'Backtest pending'} · {(backtest?.guardrails || []).join(' · ')}</div></div>;
+  }
+
+  function PeerComparisonTable({ theme, peers = [], onPick }) {
+    const rows = peers.map(p => [p.symbol || p.sym, p.name, fmt.money(p.price || 0), fmt.pct(p.changePct || p.pctChg || 0), Number(p.score || p.composite || 0).toFixed(1), Number(p.pe || 0).toFixed(1), fmt.pct(p.revenueGrowthPct || 0)]);
+    return <DenseTable theme={theme} rows={rows} headers={['SYM','NAME','LAST','CHG','SCORE','P/E','REV GR']} onRow={(idx) => onPick(rows[idx][0])} />;
+  }
+
+  function PaperJournalView({ theme, symbol, journal = [] }) {
+    const rows = journal.map(o => [String(o.created_at || '').slice(5, 16), o.side, o.qty, o.order_type, o.status, fmt.money(o.fill_price || o.limit_price || 0), o.reason || '']);
+    return <DenseTable theme={theme} rows={rows} headers={['TIME','SIDE','QTY','TYPE','STATUS','PRICE','REASON']} empty={`No paper orders for ${symbol}.`} />;
+  }
+
+  function SignalAuditScreen({ theme, onPick }) {
+    const { data, loading, error } = useJson('/api/signals/audit?limit=16', null);
+    const rows = (data?.items || []).map(item => [item.symbol, item.action, Number(item.score || 0).toFixed(1), Number(item.confidence || 0).toFixed(0), (item.whyChanged || []).join(' | '), (item.warnings || []).join(' | ')]);
+    return (
+      <div style={{ height: '100%', display: 'grid', gridTemplateRows: '120px 1fr', gap: 6 }}>
+        <Panel theme={theme} code="RUNS" title="stored weekly signal runs"><div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, height: '100%', fontSize: 10 }}>{(data?.runs || []).slice(0, 4).map(run => <MetricBox key={run.run_id} theme={theme} label={run.week} value={run.status} color={theme.up} />)}{loading && <div style={{ color: theme.dim }}>Loading audit...</div>}{error && <div style={{ color: theme.down }}>{error}</div>}</div></Panel>
+        <Panel theme={theme} code="AUDIT" title="why changed / stale-data flags"><DenseTable theme={theme} rows={rows} headers={['SYM','ACTION','SCORE','CONF','WHY CHANGED','WARNINGS']} onRow={(idx) => onPick(rows[idx][0])} /></Panel>
+      </div>
+    );
+  }
+
+  function StrategyLabScreen({ theme, onPick }) {
+    const [strategy, setStrategy] = React.useState('MOMENTUM');
+    const [lookback, setLookback] = React.useState(126);
+    const [data, setData] = React.useState(null);
+    const run = React.useCallback(() => {
+      fetch('/api/strategy/run', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ strategy, lookbackDays: lookback }) }).then(res => res.json()).then(setData).catch(() => setData(null));
+    }, [strategy, lookback]);
+    React.useEffect(run, [run]);
+    const rows = (data?.ranked || []).map(item => [item.symbol, item.action, Number(item.strategyScore || 0).toFixed(1), Number(item.score || 0).toFixed(1), Number(item.confidence || 0).toFixed(0), (item.reasons || [])[0] || '']);
+    return (
+      <div style={{ height: '100%', display: 'grid', gridTemplateColumns: '320px 1fr', gap: 6 }}>
+        <Panel theme={theme} code="CTRL" title="strategy presets"><div style={{ display: 'grid', gap: 7, fontSize: 10 }}><select value={strategy} onChange={e => setStrategy(e.target.value)} style={{ background: theme.bg2, color: theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono, padding: 5 }}>{['MOMENTUM','QUALITY','VALUE','REVERSAL','EARN_DRIFT'].map(x => <option key={x}>{x}</option>)}</select><input type="number" value={lookback} min="21" max="252" onChange={e => setLookback(Number(e.target.value))} style={{ background: theme.bg2, color: theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono, padding: 5 }} /><button onClick={run} style={{ background: theme.accent, color: theme.bg, border: 'none', fontFamily: theme.fontMono, fontWeight: 900, padding: 6, cursor: 'pointer' }}>RUN STRATEGY</button><BacktestMini theme={theme} backtest={data?.backtest} /></div></Panel>
+        <Panel theme={theme} code="RANK" title={`${strategy} ranked candidates`}><DenseTable theme={theme} rows={rows} headers={['SYM','ACTION','STRAT','BASE','CONF','WHY']} onRow={(idx) => onPick(rows[idx][0])} /></Panel>
+      </div>
+    );
+  }
+
+  function WatchCommandCenter({ theme, tickers = [], currentSym, onPick }) {
+    const [q, setQ] = React.useState('');
+    const [sort, setSort] = React.useState('composite');
+    const rows = tickers.filter(t => !q || t.sym.includes(q.toUpperCase()) || String(t.name || '').toUpperCase().includes(q.toUpperCase())).sort((a, b) => Number(b[sort] || 0) - Number(a[sort] || 0)).slice(0, 260).map(t => [t.sym, t.name, fmt.money(t.price || 0), fmt.pct(t.pctChg || 0), fmt.big(t.volume || 0), Number(t.composite || 0).toFixed(0), Number(t.beta || 0).toFixed(2)]);
+    return (
+      <div style={{ height: '100%', display: 'grid', gridTemplateRows: '34px 1fr', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6 }}><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search full universe..." style={{ flex: 1, background: theme.bg2, color: theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono, padding: 6 }} /><select value={sort} onChange={e => setSort(e.target.value)} style={{ background: theme.bg2, color: theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono }}><option value="composite">Q Score</option><option value="pctChg">Change</option><option value="volume">Volume</option><option value="beta">Beta</option></select><span style={{ color: theme.dim, alignSelf: 'center' }}>{rows.length} rows</span></div>
+        <Panel theme={theme} code="WTCH" title="full-screen watchlist command center"><DenseTable theme={theme} rows={rows} headers={['SYM','NAME','LAST','CHG','VOL','Q','BETA']} onRow={(idx) => onPick(rows[idx][0])} highlight={currentSym} /></Panel>
+      </div>
+    );
+  }
+
+  function AlertRulesScreen({ theme, symbol }) {
+    const [refresh, setRefresh] = React.useState(0);
+    const { data } = useJson(`/api/alerts/rules?refresh=${refresh}`, { items: [] });
+    const [ruleType, setRuleType] = React.useState('PRICE_CROSS');
+    const [threshold, setThreshold] = React.useState('');
+    const [severity, setSeverity] = React.useState('WARN');
+    const create = () => fetch('/api/alerts/rules', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol, ruleType, threshold, severity }) }).then(() => setRefresh(v => v + 1));
+    const rows = (data?.items || []).map(r => [String(r.created_at || '').slice(5, 16), r.symbol, r.rule_type, r.threshold ?? '--', r.severity, r.status, r.note || '']);
+    return (
+      <div style={{ height: '100%', display: 'grid', gridTemplateRows: '70px 1fr', gap: 6 }}>
+        <Panel theme={theme} code="NEW" title="new alert rule"><div style={{ display: 'grid', gridTemplateColumns: '90px 150px 120px 100px auto', gap: 6, alignItems: 'center', fontSize: 10 }}><span style={{ color: theme.accent, fontWeight: 800 }}>{symbol}</span><select value={ruleType} onChange={e => setRuleType(e.target.value)} style={{ background: theme.bg2, color: theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono }}><option>PRICE_CROSS</option><option>SIGNAL_CHANGE</option><option>VOLUME_SPIKE</option><option>DRAWDOWN</option><option>NEWS_SENTIMENT</option><option>EARNINGS_WINDOW</option><option>PROVIDER_STALE</option></select><input value={threshold} onChange={e => setThreshold(e.target.value)} placeholder="threshold" style={{ background: theme.bg2, color: theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono, padding: 4 }} /><select value={severity} onChange={e => setSeverity(e.target.value)} style={{ background: theme.bg2, color: theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono }}><option>WARN</option><option>INFO</option><option>CRITICAL</option></select><button onClick={create} style={{ background: theme.accent, color: theme.bg, border: 'none', fontFamily: theme.fontMono, fontWeight: 900, padding: 5, cursor: 'pointer' }}>CREATE</button></div></Panel>
+        <Panel theme={theme} code="RULE" title="stored alert rules"><DenseTable theme={theme} rows={rows} headers={['TIME','SYM','TYPE','THRESH','SEV','STATUS','NOTE']} /></Panel>
+      </div>
+    );
+  }
+
+  function CalendarActionsScreen({ theme, symbol, market }) {
+    const { data } = useJson(`/api/calendar?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}`, { items: [] });
+    const rows = (data?.items || []).map(item => [item.date, item.symbol, item.market, item.type, item.status, item.source]);
+    return <Panel theme={theme} code="CAL" title="corporate actions / exchange calendar"><DenseTable theme={theme} rows={rows} headers={['DATE','SYM','MKT','TYPE','STATUS','SOURCE']} empty="Calendar pending." /></Panel>;
+  }
+
   Object.assign(window, {
     Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores, OrderBook, OptionsFlow,
     NewsFeed, InsiderTx, ShortInterest, SectorHeatmap, Watchlist, TopMovers,
