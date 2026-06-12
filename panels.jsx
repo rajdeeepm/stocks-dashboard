@@ -1211,10 +1211,505 @@
     );
   }
 
+  function TickerResearchModal({ theme, symbol, ticker, market, allTickers = [], research = {}, onPick, onClose }) {
+    const [payload, setPayload] = React.useState({ loading: true, summary: research.summary, history: [], backtest: null, portfolio: null, journal: [], error: '' });
+    const sym = String(symbol || '').toUpperCase();
+    React.useEffect(() => {
+      let live = true;
+      setPayload(p => ({ ...p, loading: true, error: '' }));
+      const getJson = async (url, options) => {
+        const res = await fetch(url, options || { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.detail || data.error || url);
+        return data;
+      };
+      Promise.allSettled([
+        getJson(`/api/research/summary?symbol=${encodeURIComponent(sym)}`),
+        getJson(`/api/signals/history?symbol=${encodeURIComponent(sym)}&limit=12`),
+        getJson('/api/backtest/run', {
+          method: 'POST',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ symbols: [sym], lookbackDays: 90 }),
+        }),
+        getJson('/api/portfolio'),
+        getJson('/api/paper/journal?limit=20'),
+      ]).then(([summary, history, backtest, portfolio, journal]) => {
+        if (!live) return;
+        setPayload({
+          loading: false,
+          summary: summary.status === 'fulfilled' ? summary.value : research.summary,
+          history: history.status === 'fulfilled' ? history.value.items || [] : [],
+          backtest: backtest.status === 'fulfilled' ? backtest.value : null,
+          portfolio: portfolio.status === 'fulfilled' ? portfolio.value : null,
+          journal: journal.status === 'fulfilled' ? journal.value.items || [] : [],
+          error: [summary, history, backtest, portfolio, journal].filter(x => x.status === 'rejected').map(x => x.reason.message).join(' | '),
+        });
+      });
+      return () => { live = false; };
+    }, [sym]);
+
+    const summary = payload.summary || research.summary || {};
+    const signal = summary.signal || (research.signals || []).find(s => s.symbol === sym) || {};
+    const memo = summary.memo || {};
+    const quote = summary.quote || {};
+    const factors = signal.factors || {};
+    const news = summary.news || [];
+    const localPeers = React.useMemo(() => {
+      const sector = ticker?.sector;
+      const marketName = ticker?.market || market;
+      return (allTickers || [])
+        .filter(t => t.sym !== sym && (t.sector === sector || t.market === marketName))
+        .slice(0, 12);
+    }, [allTickers, sym, ticker, market]);
+    const fundamentals = summary.fundamentals || {};
+    const valuation = summary.valuation || {};
+    const peers = (summary.peers && summary.peers.length ? summary.peers : localPeers);
+    const signalDelta = summary.signalDelta || {};
+    const regime = summary.regime || {};
+    const strategies = summary.strategies || [];
+    const earnings = summary.earnings?.items || [];
+    const score = Number(signal.score || ticker?.composite || 0);
+    const confidence = Number(signal.confidence || 0);
+    const fairValue = valuation.fairValue || (ticker?.price ? ticker.price * (1 + (score - 50) / 140) : 0);
+    const upside = ticker?.price ? ((fairValue - ticker.price) / ticker.price) * 100 : 0;
+    const metricRows = [
+      ['LAST', fmt.money(ticker?.price || quote.close || 0)],
+      ['CHG%', fmt.pct(ticker?.pctChg || quote.changePct || 0)],
+      ['MCAP', '$' + fmt.big(ticker?.mcap || 0)],
+      ['P/E', Number(ticker?.pe || 0).toFixed(1)],
+      ['FWD P/E', Number(ticker?.fwdPe || 0).toFixed(1)],
+      ['BETA', Number(ticker?.beta || 0).toFixed(2)],
+      ['52W H', fmt.money(ticker?.yHigh || 0)],
+      ['52W L', fmt.money(ticker?.yLow || 0)],
+    ];
+
+    return (
+      <div style={{
+        position: 'absolute', inset: 8, zIndex: 70,
+        background: 'rgba(5,4,2,0.94)', border: `1px solid ${theme.borderHi}`,
+        boxShadow: '0 18px 60px rgba(0,0,0,0.72)', color: theme.text,
+        fontFamily: theme.fontMono, display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          height: 34, display: 'flex', alignItems: 'center', gap: 10,
+          padding: '0 10px', background: theme.bg2, borderBottom: `1px solid ${theme.borderHi}`,
+          fontSize: 11, letterSpacing: '0.06em',
+        }}>
+          <span style={{ color: theme.accent, fontWeight: 900 }}>DESK</span>
+          <span style={{ color: theme.textBright, fontWeight: 800 }}>{sym}</span>
+          <span style={{ color: theme.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ticker?.name || sym}</span>
+          <span style={{ color: payload.loading ? theme.warn : theme.up, marginLeft: 'auto' }}>{payload.loading ? 'LOADING' : 'READY'}</span>
+          <button onClick={onClose} style={{
+            background: theme.panelHi, border: `1px solid ${theme.border}`,
+            color: theme.textBright, fontFamily: theme.fontMono, fontWeight: 900,
+            cursor: 'pointer', padding: '2px 8px',
+          }}>CLOSE</button>
+        </div>
+
+        <div style={{
+          flex: 1, minHeight: 0, padding: 6, display: 'grid', gap: 6,
+          gridTemplateColumns: '1.25fr 1fr 1fr 1fr',
+          gridTemplateRows: '150px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)',
+        }}>
+          <Panel theme={theme} code="CHRT" title={`${sym} - price context`} style={{ gridColumn: 'span 2' }} bodyStyle={{ padding: 0 }}>
+            <window.PriceChart ticker={ticker} theme={theme} range="3M" showMA20={true} showMA50={true} showMA200={false} showBB={false} />
+          </Panel>
+
+          <Panel theme={theme} code="SNAP" title={`${sym} · research snapshot`} style={{ gridColumn: 'span 1' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, height: '100%', fontSize: 10 }}>
+              {metricRows.map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', background: theme.bg2, border: `1px solid ${theme.border}`, padding: '2px 5px' }}>
+                  <span style={{ color: theme.dim }}>{k}</span>
+                  <span style={{ color: theme.textBright, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel theme={theme} code="THESIS" title="signal trust · current stance" style={{ gridColumn: 'span 1' }}>
+            <div style={{ fontSize: 10, height: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
+                <div style={{ background: theme.bg2, border: `1px solid ${theme.border}`, padding: 5 }}>
+                  <div style={{ color: theme.dim, fontSize: 8 }}>STANCE</div>
+                  <div style={{ color: signal.action === 'LONG_CANDIDATE' ? theme.up : signal.action === 'AVOID' ? theme.down : theme.warn, fontWeight: 900 }}>{signal.action || 'N/A'}</div>
+                </div>
+                <div style={{ background: theme.bg2, border: `1px solid ${theme.border}`, padding: 5 }}>
+                  <div style={{ color: theme.dim, fontSize: 8 }}>SCORE</div>
+                  <div style={{ color: theme.textBright, fontWeight: 900 }}>{score.toFixed(1)}</div>
+                </div>
+                <div style={{ background: theme.bg2, border: `1px solid ${theme.border}`, padding: 5 }}>
+                  <div style={{ color: theme.dim, fontSize: 8 }}>CONF</div>
+                  <div style={{ color: confidence >= 75 ? theme.up : confidence >= 55 ? theme.warn : theme.down, fontWeight: 900 }}>{confidence.toFixed(0)}%</div>
+                </div>
+              </div>
+              <div style={{ color: theme.text, lineHeight: 1.35, padding: '4px 2px' }}>{memo.summary || `${sym} research memo is being built from live quote, signal, and news data.`}</div>
+              {signalDelta.summary && <div style={{ color: theme.accent2, borderBottom: `1px dotted ${theme.border}`, paddingBottom: 2 }}>DELTA {signalDelta.summary}</div>}
+              {(memo.whyNow || signal.reasons || []).slice(0, 3).map((r, i) => <div key={i} style={{ color: theme.up, borderBottom: `1px dotted ${theme.border}`, paddingBottom: 2 }}>+ {r}</div>)}
+              {(memo.riskFlags || signal.risks || []).slice(0, 2).map((r, i) => <div key={'r'+i} style={{ color: theme.warn }}>! {r}</div>)}
+            </div>
+          </Panel>
+
+          <Panel theme={theme} code="VALUE" title="valuation · dcf-lite" style={{ gridColumn: 'span 1' }}>
+            <ValuationMini theme={theme} valuation={{ ...valuation, fairValue, upsidePct: valuation.upsidePct ?? upside }} />
+          </Panel>
+
+          <Panel theme={theme} code="FUND" title="fundamentals - provider-ready" style={{ gridColumn: 'span 1' }}>
+            <FundamentalsMini theme={theme} fundamentals={fundamentals} />
+          </Panel>
+
+          <Panel theme={theme} code="STRAT" title="strategy presets - fit" style={{ gridColumn: 'span 1' }}>
+            <StrategyMini theme={theme} strategies={strategies} />
+          </Panel>
+
+          <Panel theme={theme} code="REGM" title="market regime - filter" style={{ gridColumn: 'span 1' }}>
+            <RegimeMini theme={theme} regime={regime} />
+          </Panel>
+
+          <Panel theme={theme} code="FACTOR" title="factor attribution" style={{ gridColumn: 'span 1' }}>
+            <FactorBars theme={theme} factors={factors} />
+          </Panel>
+
+          <Panel theme={theme} code="NEWS" title={`${sym} · latest news`} style={{ gridColumn: 'span 1' }}>
+            <div style={{ height: '100%', overflow: 'auto', fontSize: 10 }}>
+              {news.slice(0, 8).map((n, i) => (
+                <div key={i} style={{ padding: '4px 0', borderBottom: `1px dotted ${theme.border}` }}>
+                  <a href={n.link || '#'} target="_blank" rel="noopener noreferrer" style={{ color: theme.text, lineHeight: 1.25, textDecoration: 'none', display: 'block' }}>{n.title || n.head}</a>
+                  <div style={{ color: theme.dim, fontSize: 8, marginTop: 2 }}>{(n.source || n.src || 'NEWS').toUpperCase()} · {n.published || `${n.minsAgo || 0}m ago`}</div>
+                </div>
+              ))}
+              {!news.length && <div style={{ color: theme.dim, padding: 8 }}>No news loaded yet.</div>}
+            </div>
+          </Panel>
+
+          <Panel theme={theme} code="BT" title="single-name backtest context" style={{ gridColumn: 'span 1' }}>
+            <BacktestMini theme={theme} backtest={payload.backtest} />
+          </Panel>
+
+          <Panel theme={theme} code="HIST" title="signal history · audit trail" style={{ gridColumn: 'span 1' }}>
+            <SignalHistoryMini theme={theme} rows={payload.history} />
+          </Panel>
+
+          <Panel theme={theme} code="PEER" title="peer / market comparison" style={{ gridColumn: 'span 1' }}>
+            <PeerMini theme={theme} peers={peers} onPick={onPick} />
+          </Panel>
+
+          <Panel theme={theme} code="EARN" title="events - earnings/revisions" style={{ gridColumn: 'span 1' }}>
+            <EarningsMini theme={theme} rows={earnings} />
+          </Panel>
+
+          <Panel theme={theme} code="FRESH" title="data freshness · labels" style={{ gridColumn: 'span 1' }}>
+            <FreshnessMini theme={theme} freshness={signal.freshness || memo.freshness || {}} error={payload.error} />
+          </Panel>
+
+          <Panel theme={theme} code="PAPR" title="paper order ticket" style={{ gridColumn: 'span 1' }}>
+            <PaperTicketMini theme={theme} symbol={sym} price={ticker?.price || quote.close || 0} />
+          </Panel>
+        </div>
+      </div>
+    );
+  }
+
+  function ValuationMini({ theme, valuation = {} }) {
+    const upside = Number(valuation.upsidePct || 0);
+    const assumptions = valuation.assumptions || {};
+    const rows = [
+      ['FAIR', fmt.money(valuation.fairValue || 0)],
+      ['UPSIDE', fmt.pct(upside)],
+      ['BULL', fmt.money(valuation.bullValue || 0)],
+      ['BEAR', fmt.money(valuation.bearValue || 0)],
+      ['GROWTH', fmt.pct(assumptions.growth5yPct || 0)],
+      ['DISCOUNT', fmt.pct(assumptions.discountRatePct || 0)],
+    ];
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 10 }}>
+        {rows.map(([k, v]) => (
+          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 2px', borderBottom: `1px dotted ${theme.border}` }}>
+            <span style={{ color: theme.dim }}>{k}</span>
+            <span style={{ color: k === 'UPSIDE' ? (upside >= 0 ? theme.up : theme.down) : theme.textBright, fontWeight: 800 }}>{v}</span>
+          </div>
+        ))}
+        <div style={{ marginTop: 5, color: theme.warn, lineHeight: 1.3 }}>MODELED DCF-LITE · provider-ready</div>
+      </div>
+    );
+  }
+
+  function FundamentalsMini({ theme, fundamentals = {} }) {
+    const multiples = fundamentals.multiples || {};
+    const rows = [
+      ['REV TTM', `$${Number(fundamentals.revenueTtmB || 0).toFixed(1)}B`],
+      ['REV GR', fmt.pct(fundamentals.revenueGrowthPct || 0)],
+      ['EPS TTM', Number(fundamentals.epsTtm || 0).toFixed(2)],
+      ['EPS GR', fmt.pct(fundamentals.epsGrowthPct || 0)],
+      ['OP MGN', fmt.pct(fundamentals.operatingMarginPct || 0)],
+      ['ROE', fmt.pct(fundamentals.roePct || 0)],
+      ['D/E', Number(fundamentals.debtToEquity || 0).toFixed(2)],
+      ['P/E', Number(multiples.pe || 0).toFixed(1)],
+      ['EV/EBITDA', Number(multiples.evEbitda || 0).toFixed(1)],
+      ['PEG', Number(multiples.peg || 0).toFixed(2)],
+    ];
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 10 }}>
+        {rows.map(([k, v]) => (
+          <div key={k} style={{ display: 'grid', gridTemplateColumns: '72px 1fr', gap: 6, padding: '2px 0', borderBottom: `1px dotted ${theme.border}` }}>
+            <span style={{ color: theme.dim }}>{k}</span>
+            <span style={{ color: theme.textBright, textAlign: 'right', fontWeight: 700 }}>{v}</span>
+          </div>
+        ))}
+        {fundamentals.modeled && <div style={{ color: theme.warn, marginTop: 5 }}>MODELED UNTIL FUNDAMENTALS FEED CONNECTED</div>}
+      </div>
+    );
+  }
+
+  function RegimeMini({ theme, regime = {} }) {
+    const state = regime.state || 'PENDING';
+    const color = state === 'RISK_ON' ? theme.up : state === 'RISK_OFF' ? theme.down : theme.warn;
+    const rows = [
+      ['STATE', state],
+      ['VOL', fmt.pct(regime.volatilityPct || 0)],
+      ['BREADTH', fmt.pct(regime.breadthProxyPct || 0)],
+      ['VS 50D', fmt.pct(regime.priceVs50dPct || 0)],
+    ];
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 10 }}>
+        {rows.map(([k, v]) => (
+          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 2px', borderBottom: `1px dotted ${theme.border}` }}>
+            <span style={{ color: theme.dim }}>{k}</span>
+            <span style={{ color: k === 'STATE' ? color : theme.text, fontWeight: 800 }}>{v}</span>
+          </div>
+        ))}
+        {(regime.notes || []).slice(0, 2).map((note, i) => <div key={i} style={{ color: theme.dim, marginTop: 4 }}>{note}</div>)}
+      </div>
+    );
+  }
+
+  function StrategyMini({ theme, strategies = [] }) {
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 10 }}>
+        {strategies.map((row) => (
+          <div key={row.name} style={{ display: 'grid', gridTemplateColumns: '72px 1fr 34px', gap: 5, alignItems: 'center', padding: '3px 0', borderBottom: `1px dotted ${theme.border}` }}>
+            <span style={{ color: theme.accent, fontWeight: 800 }}>{row.name}</span>
+            <span style={{ color: theme.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.logic}</span>
+            <span style={{ color: row.score >= 65 ? theme.up : row.score >= 45 ? theme.warn : theme.down, textAlign: 'right', fontWeight: 800 }}>{Number(row.score || 0).toFixed(0)}</span>
+          </div>
+        ))}
+        {!strategies.length && <div style={{ color: theme.dim, padding: 8 }}>Strategy fit pending.</div>}
+      </div>
+    );
+  }
+
+  function EarningsMini({ theme, rows = [] }) {
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 10 }}>
+        {rows.map((row, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '76px 1fr 34px', gap: 4, padding: '3px 0', borderBottom: `1px dotted ${theme.border}` }}>
+            <span style={{ color: theme.dim }}>{String(row.date || '').slice(5) || '--'}</span>
+            <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.event || row.symbol}</span>
+            <span style={{ color: row.time === 'AMC' ? theme.accent2 : theme.warn, textAlign: 'right' }}>{row.time || '--'}</span>
+          </div>
+        ))}
+        {!rows.length && <div style={{ color: theme.dim, padding: 8 }}>No event window loaded.</div>}
+      </div>
+    );
+  }
+
+  function PaperTicketMini({ theme, symbol, price }) {
+    const [side, setSide] = React.useState('BUY');
+    const [qty, setQty] = React.useState(10);
+    const [orderType, setOrderType] = React.useState('MARKET');
+    const [limitPrice, setLimitPrice] = React.useState('');
+    const [status, setStatus] = React.useState('');
+    const notional = Number(qty || 0) * Number(limitPrice || price || 0);
+    const submit = async () => {
+      setStatus('SENDING');
+      try {
+        const res = await fetch('/api/paper/order', {
+          method: 'POST',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ symbol, side, qty: Number(qty), orderType, limitPrice }),
+        });
+        const data = await res.json();
+        setStatus(data.error ? data.detail || data.error : `${data.status} ${data.orderId}`);
+      } catch (err) {
+        setStatus(err.message || 'ORDER ERROR');
+      }
+    };
+    const inputStyle = { background: theme.bg2, color: theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono, fontSize: 10, padding: 3, minWidth: 0 };
+    return (
+      <div style={{ height: '100%', display: 'grid', gridTemplateRows: 'auto auto auto 1fr', gap: 5, fontSize: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+          {['BUY', 'SELL'].map(s => <button key={s} onClick={() => setSide(s)} style={{ background: side === s ? (s === 'BUY' ? theme.up : theme.down) : theme.panelHi, color: side === s ? theme.bg : theme.text, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono, fontWeight: 900, cursor: 'pointer' }}>{s}</button>)}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+          <select value={orderType} onChange={e => setOrderType(e.target.value)} style={inputStyle}>
+            <option>MARKET</option>
+            <option>LIMIT</option>
+          </select>
+          <input value={qty} onChange={e => setQty(e.target.value)} type="number" min="1" style={inputStyle} />
+        </div>
+        <input value={limitPrice} onChange={e => setLimitPrice(e.target.value)} placeholder={orderType === 'LIMIT' ? 'limit price' : `last ${fmt.money(price || 0)}`} style={inputStyle} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 0 }}>
+          <div style={{ color: theme.dim }}>NOTIONAL <span style={{ color: theme.textBright, float: 'right' }}>{fmt.money(notional || 0)}</span></div>
+          <button onClick={submit} style={{ marginTop: 'auto', background: theme.accent, color: theme.bg, border: 'none', fontFamily: theme.fontMono, fontWeight: 900, padding: 4, cursor: 'pointer' }}>SEND PAPER</button>
+          <div style={{ color: status.includes('ERROR') || status.includes('blocked') ? theme.down : theme.warn, minHeight: 24 }}>{status || 'Paper only · duplicate guard active'}</div>
+        </div>
+      </div>
+    );
+  }
+
+  function FactorBars({ theme, factors = {} }) {
+    const rows = Object.entries(factors);
+    return (
+      <div style={{ height: '100%', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 4, fontSize: 10 }}>
+        {rows.map(([k, v]) => (
+          <div key={k} style={{ display: 'grid', gridTemplateColumns: '72px 1fr 34px', gap: 6, alignItems: 'center' }}>
+            <span style={{ color: theme.dim, textTransform: 'uppercase' }}>{k}</span>
+            <div style={{ height: 9, border: `1px solid ${theme.border}`, background: theme.bg2, position: 'relative' }}>
+              <div style={{ position: 'absolute', inset: 0, width: `${Math.max(0, Math.min(100, Number(v) || 0))}%`, background: Number(v) >= 70 ? theme.up : Number(v) >= 45 ? theme.warn : theme.down }} />
+            </div>
+            <span style={{ color: theme.text, textAlign: 'right', fontWeight: 700 }}>{Number(v || 0).toFixed(0)}</span>
+          </div>
+        ))}
+        {!rows.length && <div style={{ color: theme.dim, padding: 8 }}>No factor payload yet.</div>}
+      </div>
+    );
+  }
+
+  function BacktestMini({ theme, backtest }) {
+    const item = backtest?.items?.[0];
+    const summary = backtest?.summary || {};
+    const curve = backtest?.equityCurve || [];
+    const points = curve.slice(-80);
+    const values = points.map(p => Number(p.equity || 1));
+    const min = Math.min(...values, 0.95);
+    const max = Math.max(...values, 1.05);
+    const poly = values.map((v, i) => {
+      const x = values.length <= 1 ? 0 : (i / (values.length - 1)) * 100;
+      const y = 34 - ((v - min) / Math.max(0.0001, max - min)) * 30;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    return (
+      <div style={{ fontSize: 10, height: '100%', overflow: 'auto' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 5 }}>
+          <div style={{ background: theme.bg2, border: `1px solid ${theme.border}`, padding: 6 }}>
+            <div style={{ color: theme.dim, fontSize: 8 }}>90D RETURN</div>
+            <div style={{ color: item?.returnPct >= 0 ? theme.up : theme.down, fontSize: 18, fontWeight: 900 }}>{item ? fmt.pct(item.returnPct) : '--'}</div>
+          </div>
+          <div style={{ background: theme.bg2, border: `1px solid ${theme.border}`, padding: 6 }}>
+            <div style={{ color: theme.dim, fontSize: 8 }}>MAX DD / WIN</div>
+            <div style={{ color: theme.text, fontWeight: 900 }}>{fmt.pct(summary.maxDrawdownPct || item?.maxDrawdownPct || 0)} / {Number(summary.winRatePct || 0).toFixed(0)}%</div>
+          </div>
+        </div>
+        {!!values.length && (
+          <svg viewBox="0 0 100 36" preserveAspectRatio="none" style={{ width: '100%', height: 42, border: `1px solid ${theme.border}`, background: theme.bg2, marginBottom: 5 }}>
+            <polyline points={poly} fill="none" stroke={values[values.length - 1] >= values[0] ? theme.up : theme.down} strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
+          </svg>
+        )}
+        <div style={{ color: theme.dim, lineHeight: 1.35 }}>{backtest?.method || 'Backtest pending.'}</div>
+        {(backtest?.guardrails || []).map((g, i) => <div key={i} style={{ color: theme.warn, marginTop: 3 }}>! {g}</div>)}
+      </div>
+    );
+  }
+
+  function SignalHistoryMini({ theme, rows = [] }) {
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '68px 42px 42px 1fr', gap: 4, color: theme.dim, fontSize: 8, borderBottom: `1px solid ${theme.border}`, paddingBottom: 2 }}>
+          <span>DATE</span><span>SCORE</span><span>CONF</span><span>STANCE</span>
+        </div>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '68px 42px 42px 1fr', gap: 4, padding: '3px 0', borderBottom: `1px dotted ${theme.border}` }}>
+            <span style={{ color: theme.dim }}>{String(r.createdAt || '').slice(5, 10)}</span>
+            <span style={{ color: theme.text, textAlign: 'right' }}>{Number(r.score || 0).toFixed(1)}</span>
+            <span style={{ color: theme.text, textAlign: 'right' }}>{Number(r.confidence || 0).toFixed(0)}</span>
+            <span style={{ color: r.action === 'LONG_CANDIDATE' ? theme.up : r.action === 'AVOID' ? theme.down : theme.warn }}>{r.action}</span>
+          </div>
+        ))}
+        {!rows.length && <div style={{ color: theme.dim, padding: 8 }}>No stored signal history yet.</div>}
+      </div>
+    );
+  }
+
+  function PeerMini({ theme, peers, onPick }) {
+    return (
+      <div style={{ height: '100%', overflow: 'auto', fontSize: 10 }}>
+        {peers.slice(0, 10).map(p => {
+          const sym = p.sym || p.symbol;
+          const pct = p.pctChg ?? p.changePct ?? 0;
+          const score = p.composite ?? p.score;
+          return (
+          <button key={sym} onClick={() => onPick(sym)} style={{
+            display: 'grid', gridTemplateColumns: '54px 1fr 48px 34px', gap: 4,
+            width: '100%', padding: '3px 2px', background: 'transparent',
+            border: 'none', borderBottom: `1px dotted ${theme.border}`,
+            fontFamily: theme.fontMono, fontSize: 10, cursor: 'pointer', textAlign: 'left',
+          }}>
+            <span style={{ color: theme.accent, fontWeight: 800 }}>{sym}</span>
+            <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+            <span style={{ color: pct >= 0 ? theme.up : theme.down, textAlign: 'right' }}>{fmt.pct(pct || 0)}</span>
+            <span style={{ color: theme.warn, textAlign: 'right' }}>{score ? Number(score).toFixed(0) : '--'}</span>
+          </button>
+        );})}
+        {!peers.length && <div style={{ color: theme.dim, padding: 8 }}>No peer set loaded yet.</div>}
+      </div>
+    );
+  }
+
+  function FreshnessMini({ theme, freshness = {}, error }) {
+    const rows = [
+      ['QUOTE', `${freshness.quoteDate || '--'} ${freshness.quoteTime || ''}`],
+      ['HISTORY', freshness.historyThrough || '--'],
+      ['NEWS', freshness.newsSource || 'google-news-rss'],
+      ['SOURCE', freshness.quoteSource || 'yahoo-chart'],
+    ];
+    return (
+      <div style={{ fontSize: 10, height: '100%', overflow: 'auto' }}>
+        {rows.map(([k, v]) => (
+          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 2px', borderBottom: `1px dotted ${theme.border}` }}>
+            <span style={{ color: theme.dim }}>{k}</span>
+            <span style={{ color: theme.text, textAlign: 'right' }}>{v}</span>
+          </div>
+        ))}
+        <div style={{ marginTop: 8, padding: 6, border: `1px solid ${theme.border}`, background: theme.bg2, color: theme.warn, lineHeight: 1.35 }}>
+          All modeled fields are labeled. This cockpit is free-data first until paid fundamentals/options feeds are connected.
+        </div>
+        {error && <div style={{ marginTop: 6, color: theme.down }}>{error}</div>}
+      </div>
+    );
+  }
+
+  function ResearchOSOverlay({ theme, symbol, ticker, market, allTickers = [], research = {}, onPick, onClose }) {
+    const [tab, setTab] = React.useState('TICKER');
+    const tabs = [['TICKER','Ticker Page'], ['AUDIT','Signal Audit'], ['LAB','Strategy Lab'], ['WATCH','Watchlist'], ['ALERTS','Alert Rules'], ['CAL','Calendar']];
+    return (
+      <div style={{ position: 'absolute', inset: 6, zIndex: 75, background: 'rgba(5,4,2,0.96)', border: `1px solid ${theme.borderHi}`, boxShadow: '0 20px 70px rgba(0,0,0,0.75)', color: theme.text, fontFamily: theme.fontMono, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ height: 36, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', borderBottom: `1px solid ${theme.borderHi}`, background: theme.bg2 }}>
+          <span style={{ color: theme.accent, fontWeight: 900, letterSpacing: '0.08em' }}>RESEARCH OS</span>
+          <span style={{ color: theme.dim }}>{symbol}</span>
+          <div style={{ display: 'flex', gap: 3, marginLeft: 12 }}>
+            {tabs.map(([key, label]) => (
+              <button key={key} onClick={() => setTab(key)} style={{ background: tab === key ? theme.accent : theme.panelHi, color: tab === key ? theme.bg : theme.text, border: `1px solid ${tab === key ? theme.accent : theme.border}`, fontFamily: theme.fontMono, fontSize: 10, fontWeight: 800, padding: '3px 8px', cursor: 'pointer' }}>{label}</button>
+            ))}
+          </div>
+          <button onClick={onClose} style={{ marginLeft: 'auto', background: theme.panelHi, color: theme.textBright, border: `1px solid ${theme.border}`, fontFamily: theme.fontMono, fontWeight: 900, padding: '3px 9px', cursor: 'pointer' }}>CLOSE</button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, padding: 6 }}>
+          {tab === 'TICKER' && <FullTickerPage theme={theme} symbol={symbol} ticker={ticker} market={market} research={research} onPick={onPick} />}
+          {tab === 'AUDIT' && <SignalAuditScreen theme={theme} onPick={onPick} />}
+          {tab === 'LAB' && <StrategyLabScreen theme={theme} onPick={onPick} />}
+          {tab === 'WATCH' && <WatchCommandCenter theme={theme} tickers={allTickers} currentSym={symbol} onPick={onPick} />}
+          {tab === 'ALERTS' && <AlertRulesScreen theme={theme} symbol={symbol} />}
+          {tab === 'CAL' && <CalendarActionsScreen theme={theme} symbol={symbol} market={market} />}
+        </div>
+      </div>
+    );
+  }
+
   Object.assign(window, {
-    Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores, OrderBook, OptionsFlow, NewsFeed,
-    InsiderTx, ShortInterest, SectorHeatmap, Watchlist, TopMovers, EarningsCal, EconCal,
-    TradeIdeas, CorrMatrix, PortfolioPnL, RiskMetrics, SignalTrust, ProviderHealth,
-    ResearchMemo, BacktestPanel, PaperTrading,
+    Panel, HeaderBar, IndexRibbon, QuoteHeader, FactorScores, OrderBook, OptionsFlow,
+    NewsFeed, InsiderTx, ShortInterest, SectorHeatmap, Watchlist, TopMovers,
+    EarningsCal, EconCal, TradeIdeas, CorrMatrix, PortfolioPnL, RiskMetrics,
+    SignalTrust, ProviderHealth, ResearchMemo, BacktestPanel, PaperTrading, TickerResearchModal, ResearchOSOverlay,
   });
 })();
