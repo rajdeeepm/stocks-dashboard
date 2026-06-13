@@ -35,6 +35,9 @@ The app is built for personal research and education. It does not place trades a
 - Pulls market or symbol-specific Google News headlines and applies lightweight headline-tone scoring.
 - Serves the restored `Phosphor.html` design at `/` and keeps its fixed CRT terminal layout intact.
 - Hydrates the Phosphor terminal through `live-market.js`: live quotes, history, symbol universe, Google News headlines, index proxies, sector heatmap performance, portfolio marks, and ranked ideas update through the local API.
+- Keeps modeled placeholders only where free public live data is not yet wired: level-2 depth, options-flow prints, insider transactions, earnings dates, and macro calendar estimates.
+- Adds the first Fincept Parity Plus spine: SQLite-backed provider health, weekly signal runs, signal history, research memos, simple backtests, alerts, and paper trading journal.
+- Keeps the product edge focused on signal trust: scores include factors, reasons, risk flags, source freshness, and modeled-field labels.
 - Adds a global market dashboard selector in the Phosphor header. Each market gets its own scoped universe, movers, watchlist, correlation matrix, quote refresh, and index ribbon.
 - Keeps the symbol picker broader than the live quote loop: the dropdown/search uses the market directory, while dashboard panels quote a liquid focus list to stay responsive.
 
@@ -59,3 +62,21 @@ Coverage today:
 - India: NSE official equity CSV, currently thousands of listed equities.
 - Japan, UK, Europe, Hong Kong / China, Canada, Australia: curated focus directories with custom Yahoo-symbol entry in the picker.
 
+## Research APIs
+
+- `GET /api/providers/status`
+- `GET /api/research/summary?symbol=NVDA`
+- `GET /api/signals/latest`
+- `POST /api/signals/run`
+- `GET /api/signals/history?symbol=NVDA`
+- `POST /api/backtest/run`
+- `GET /api/portfolio`
+- `POST /api/paper/order`
+- `GET /api/paper/journal`
+- `GET /api/alerts`
+
+The local SQLite audit trail is stored in `research.db`.
+
+## Notes
+
+Free public endpoints can be delayed, rate-limited, incomplete, or unavailable. Treat every figure as an input to research, not as an execution signal.
