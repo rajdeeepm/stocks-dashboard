@@ -16,7 +16,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -234,8 +234,12 @@ MARKET_UNIVERSES = {
 }
 
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+
+
 def now_iso() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return utc_now().isoformat() + "Z"
 
 
 def week_key(value: date | None = None) -> str:
@@ -1980,7 +1984,7 @@ def paper_order(payload: dict[str, Any]) -> dict[str, Any]:
             WHERE symbol = ? AND side = ? AND qty = ? AND created_at > ?
             ORDER BY created_at DESC LIMIT 1
             """,
-            (symbol, side, qty, (datetime.utcnow() - timedelta(seconds=30)).replace(microsecond=0).isoformat() + "Z"),
+            (symbol, side, qty, (utc_now() - timedelta(seconds=30)).isoformat() + "Z"),
         ).fetchone()
     if duplicate:
         return {"error": "Duplicate paper order blocked", "detail": f"Recent matching order {duplicate['order_id']} exists"}
