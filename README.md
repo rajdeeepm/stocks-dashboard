@@ -36,7 +36,7 @@ The app is built for personal research and education. It does not place trades a
 - Serves the restored `Phosphor.html` design at `/` and keeps its fixed CRT terminal layout intact.
 - Hydrates the Phosphor terminal through `live-market.js`: live quotes, history, symbol universe, Google News headlines, index proxies, sector heatmap performance, portfolio marks, and ranked ideas update through the local API.
 - Keeps modeled placeholders only where free public live data is not yet wired: level-2 depth, options-flow prints, insider transactions, earnings dates, and macro calendar estimates.
-- Adds the first Fincept Parity Plus spine: SQLite-backed provider health, weekly signal runs, signal history, research memos, simple backtests, alerts, and paper trading journal.
+- Adds the first Fincept Parity Plus spine: SQLite-backed provider health, weekly signal runs, signal history, research memos, retrospective basket analysis, alerts, and a simulated paper-trading journal.
 - Keeps the product edge focused on signal trust: scores include factors, reasons, risk flags, source freshness, and modeled-field labels.
 - Adds a global market dashboard selector in the Phosphor header. Each market gets its own scoped universe, movers, watchlist, correlation matrix, quote refresh, and index ribbon.
 - Keeps the symbol picker broader than the live quote loop: the dropdown/search uses the market directory, while dashboard panels quote a liquid focus list to stay responsive.
@@ -76,6 +76,14 @@ Coverage today:
 - `GET /api/alerts`
 
 The local SQLite audit trail is stored in `research.db`.
+
+## Historical basket analysis
+
+`POST /api/backtest/run` retains its API path for compatibility, but returns retrospective basket analysis. It evaluates historical close-to-close returns for symbols selected now. Strategy Lab selects its basket from the latest stored signal factors; it does not reconstruct signals or form portfolios using only information available at each historical date. These results may therefore contain selection look-ahead bias and are not out-of-sample evidence of strategy performance.
+
+Transaction costs, slippage and historical rebalancing are not modeled. Curves are combined by observation index rather than a verified common trading calendar. Actual portfolio turnover is not measured: `turnoverPct` is `null`, and `illustrativeTurnoverPct` is a basket-size proxy, not observed trading activity. The API's methodology and limitation text is also displayed by the research views.
+
+Paper orders use simulated fills from the latest available quote. They are journal entries, not orders routed to a broker or evidence of executable historical prices.
 
 ## Notes
 
