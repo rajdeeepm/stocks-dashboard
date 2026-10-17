@@ -1780,13 +1780,17 @@ def strategy_lab_payload(strategy: str, symbols: list[str] | None = None, lookba
     ranked.sort(key=lambda item: item["strategyScore"], reverse=True)
     picks = [item["symbol"] for item in ranked[:8]]
     backtest = backtest_run(picks, lookback_days)
+    backtest["selectionBasis"] = "latest_signal_rankings"
     return {
         "source": "strategy-lab",
         "strategy": strategy_key,
         "weights": weights,
         "ranked": ranked[:30],
         "backtest": backtest,
-        "notes": ["Strategy scores use stored weekly signal factors", "Backtest is close-to-close and free-data based"],
+        "notes": [
+            "Candidates use the latest stored signal factors, not factors reconstructed at each historical date",
+            "Returns are retrospective basket analysis and may include selection look-ahead bias",
+        ],
     }
 
 
@@ -1947,19 +1951,30 @@ def backtest_run(symbols: list[str] | None = None, lookback_days: int = 90) -> d
             drawdown = (equity / peak - 1) * 100
             max_portfolio_drawdown = min(max_portfolio_drawdown, drawdown)
             equity_curve.append({"step": index, "equity": round(equity, 4), "drawdownPct": round(drawdown, 2)})
-    turnover = min(100, max(0, len(rows) * 12.5))
+    illustrative_turnover = min(100, max(0, len(rows) * 12.5))
     return {
         "source": "yahoo-chart",
         "runId": f"BT-{uuid.uuid4().hex[:8].upper()}",
         "createdAt": now_iso(),
-        "method": "equal-weight signal basket; historical close-to-close; no intraday fills",
-        "guardrails": ["fixed lookback window", "no lookahead inputs", "no live order execution", "free data may be delayed"],
+        "method": "retrospective equal-weight basket analysis; historical close-to-close; no intraday fills",
+        "evaluationType": "retrospective_basket_analysis",
+        "selectionBasis": "provided_symbols" if symbols else "latest_signals",
+        "pointInTimeValidated": False,
+        "guardrails": [
+            "fixed lookback window",
+            "current basket selection may introduce look-ahead bias; not an out-of-sample strategy test",
+            "transaction costs and slippage excluded",
+            "turnover is not measured; the basket-size proxy is illustrative",
+            "no live order execution; free data may be delayed",
+        ],
         "summary": {
             "symbols": len(rows),
             "avgReturnPct": round(avg_ret, 2),
             "winRatePct": round(win_rate, 1),
             "maxDrawdownPct": round(max_portfolio_drawdown, 2),
-            "turnoverPct": round(turnover, 1),
+            "turnoverPct": None,
+            "illustrativeTurnoverPct": round(illustrative_turnover, 1),
+            "turnoverNote": "Basket-size proxy only; actual portfolio rebalancing turnover is not measured",
         },
         "equityCurve": equity_curve,
         "regime": market_regime(),
